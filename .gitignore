@@ -1,0 +1,8 @@
+/vendor/
+/composer.lock
+/.phpunit.cache/
+/.pest.cache/
+.phpunit.result.cache
+/build/
+/storage/mapin/
+.DS_Store

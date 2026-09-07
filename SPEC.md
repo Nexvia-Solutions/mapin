@@ -1,0 +1,611 @@
+# Mapin - Specification
+
+**Status:** draft v0.1, pending approval
+**Package:** `nexvia-solutions/mapin`
+**Namespace:** `Mapin`
+**License:** MIT
+**Language policy:** code, comments, commits and README in English. `README.es.md` carries the Spanish translation.
+
+---
+
+## 1. Objective
+
+Mapin builds a queryable graph of a Laravel application: files, classes, methods, routes, views, models, tables, jobs, events and documentation, connected by the edges that actually matter in Laravel (dependency injection, container bindings, route to controller, controller to view, Blade includes, Eloquent relations, dispatched jobs and events).
+
+Generic code graph tools (tree-sitter based) only see what is visible in the syntax of a single file. In Laravel, most wiring happens through the container, through strings (`route('name')`, `view('name')`) and through conventions (`hasMany`, `$listen`, `Route::get`). Measured on a real application of about 900 PHP files, a generic extractor captured static calls and nothing else: zero edges for injection, `new`, member calls, routes, views, Blade or relations. Mapin exists to cover exactly that gap.
+
+### 1.1 Target users
+
+1. **AI coding agents** (Claude Code, Cursor, any MCP client) that need to answer "what breaks if I change this" and "where is this used" with low token cost and honest uncertainty.
+2. **Developers** doing impact analysis, onboarding or refactoring on a Laravel codebase they do not fully know.
+3. **Teams** that keep architecture docs in Markdown and want them linked to the code they describe.
+
+### 1.2 Success criteria (measurable)
+
+| Criterion | Target |
+|---|---|
+| Member calls whose receiver resolves to a class declared in the project (not a library) | 100% resolved at confidence 0.7 or higher; at least 15% at confidence 0.8 or higher |
+| Member calls overall (project and library receivers combined) | at least 75% resolved at any confidence, at least 45% at confidence 0.8 or higher |
+| Full build on about 1,000 PHP files plus 650 Blade views | under 60 seconds on a 2 core machine |
+| Incremental rebuild after touching one file | under 5 seconds |
+| Route to handler coverage | 100% of routes reported by the router |
+| `impact` query for a method returns the routes, views, jobs and docs that reach it | in one call, grouped by type, with confidence |
+| Not-found queries | always return `found: false`, never a substituted fuzzy match |
+| Staleness | every answer carries the commit the graph was built from and the number of files changed since |
+
+### 1.3 Non-goals (what Mapin does not cover)
+
+Mapin is static analysis with a read-only peek at the booted container. It does not and will not cover:
+
+- Targets computed at runtime: `view($name)`, `route($x)`, `app($class)`, `$model->$relation()`, `call_user_func`, `__call`. These are recorded as unresolved with the expression text.
+- Full data flow through local variables. Chains are followed only through declared return types and a small set of Laravel-aware rules.
+- Conditional container bindings (per environment, per tenant). The binding present in the booted environment is recorded.
+- Eloquent magic by property access (`$order->customer`) unless the receiver type is known; accessors, casts and dynamic scopes.
+- Anything stored in the database: enabled modules per tenant, permissions, feature flags, menu tables.
+- Raw SQL at column level. `DB::table('x')` and `Schema::create('x')` yield table names only.
+- JavaScript in depth. Phase 7 maps HTTP calls in JS files to routes by URL; component trees and state flow are out of scope.
+- Runtime behaviour: real dead code, executed paths, performance. "No callers found" is never proof that something can be deleted.
+- Third-party code in `vendor/`. References to it become `external` nodes without content.
+- Business meaning. The Markdown module links docs to code; it does not infer intent from code.
+
+### 1.4 Phase 1 results, and the incremental invalidation gap (closed)
+
+Phase 1 built the package described in section 14's phase table: the extraction and resolution pipeline from the spike, now real code behind `Extractor`, `SymbolIndex` and `Resolver`, persisted to SQLite, driven by `mapin:build` and queried by `mapin:stats`, `mapin:find` and `mapin:callers`. It was verified two ways: 13 Pest tests (9 unit tests exercising every resolver rule in section 4.1 against an invented fixture app with no Laravel booted, 4 feature tests running the real Artisan commands through Orchestra Testbench) all pass, and `bin/benchmark.php` was run against the real Laravel application from section 4.2 (3,596 files once the vendor paths it indexes are included): a full build took 33 to 43 seconds, an incremental build after touching exactly one file took 0.14 seconds, and an incremental build with nothing changed took 0.87 seconds. Both timing targets in section 1.2 are met with comfortable margin, on a codebase over three times the file count the target names.
+
+Three bugs the tests caught before this reached anyone are worth recording, because they are exactly the kind static review would not have found: `SymbolIndex::isInterface()`-driven substitution was implemented in the chain-continuation path (`returnOf`) but not in the direct edge-recording path (`record`), so a call straight through an injected interface was never substituted with its concrete implementation, only a further chain off that call was; a synthetic `relation<kind,Target>` marker returned by a found method was mislabelled with the generic `return_type` resolution instead of `eloquent`, understating its confidence; and `FileDiscovery`'s vendor-directory exclusion matched the full absolute filesystem path rather than the path relative to the project root, so every file was silently excluded whenever the project itself happened to live under a directory literally named `vendor` - which is exactly Testbench's own layout, not a contrived edge case.
+
+**The gap (as first shipped, now closed).** Incremental correctness was not complete against the design in section 5: when a changed file's declaration affected a symbol used by an *unchanged* file - a method gaining a return type, say - the unchanged file's already-stored edges were never re-resolved, because nothing tracked which stored edges depended on which target symbols. `mapin:build --full` was always fully correct; incremental builds were fast and correct for the common case but could leave a stale edge in an unrelated file until the next full build.
+
+**The fix.** `SymbolIndex` now records, on demand (`startTracking()`/`stopTracking()`), every symbol any lookup method touches - `get()`, `has()`, `singleImplementation()` and `functionReturn()` are the only places a symbol is ever consulted, and every other lookup (`findMethod`, `findProp`, `isModel`, `isInterface`, ...) is built on top of them, so instrumenting these four is enough to capture a reference's complete dependency set regardless of how deep the resolution recursed. `ReferenceVisitor` wraps each of its four top-level reference sites (member call, static call, `new`, `app()`/`resolve()`) in a tracking scope and attaches the result to the `Edge` or `UnresolvedRow` it produces (`Edge::$dependsOn`, `UnresolvedRow::$dependsOn`). `SqliteStore::symbol_deps` stores this as a plain `(file_id, symbol)` table, replaced per file on every (re-)resolution. Before an incremental build touches anything, it reads each changed file's previously stored declared symbols (each class's own FQCN, its interfaces, each function's name) and unions that with what the fresh extraction now declares - additions, removals and changes are all covered by this union - then queries `symbol_deps` for every other file depending on any symbol in that set. Those files are re-parsed and re-resolved alongside the genuinely changed ones, reported separately as `files_affected` in the build report (`BuildReport::$filesAffected`), and this closes the loop with no transitive second pass needed: an affected file's own declared symbols never change (only its outgoing references are re-resolved), so nothing it declares can itself need a further round.
+
+Verified with a feature test (`tests/Feature/IncrementalInvalidationTest.php`) built specifically to fail without the fix, and confirmed to actually fail when the fix was temporarily disabled: a method with no return type is called across two files; a chained call off its result is unresolved; the method gains a return type in an incremental build that touches only its own file; the chained call in the *other*, untouched file resolves on the very next build, and that file's stored content hash is asserted unchanged throughout, proving it was never treated as "changed" - only re-resolved because it depended on what did change.
+
+Measured against the real application from 4.2: touching a single static-utility class called from dozens of places across the codebase produced 58 affected files and took 1.46 seconds incremental - still comfortably inside the 5 second target, and the case this mechanism exists for.
+
+One real bug surfaced only at this scale, not in the small fixture: `array_diff()` preserves the original array keys of survivors, and `PDOStatement::execute()` with positional `?` placeholders requires a sequential 0-indexed array - the first version of the affected-files query threw "column index out of range" the moment `array_diff` actually removed an element from the middle of a real, multi-file result set, something a one- or two-file fixture test never exercised. Every method in `SqliteStore` that builds an `IN (...)` clause now normalizes its input array with `array_values()` at the top, not just at whichever call site happened to remember to.
+
+Not yet done, tracked rather than skipped: the CI workflow (`.github/workflows/ci.yml`) is written but has not run on real GitHub Actions infrastructure; the golden-test apparatus in section 12 (a single `tests/Golden/expected.json` diffed against build output) is not built yet, the current tests assert specific expected edges directly instead; and the fixture app covers the rules in section 4.1, not the full exhaustive pattern list section 12 describes for later phases (routes, Blade, jobs, events, migrations are phase 2 extractors that do not exist yet).
+
+---
+
+### 1.5 Phase 2 results
+
+Phase 2 added the Laravel-specific extractors from section 14's phase table: `RouteExtractor` and `BindingExtractor` (both `requiresBoot(): true`, reading the booted `Router`/`Container` directly, no source parsing), `BladeExtractor` (regex-based against `@extends`/`@include`/`@includeIf`/`@each`/`@includeWhen`/`@includeUnless`/`@includeFirst`/`@component` and `<x-*>`/`<x:*>` component tags - not the "compiler based plus fallback" the phase table originally named; regex was enough to pass every case tested and is simpler, so the compiler-based approach was not built), plus new detection inside the existing `PhpExtractor`/`ReferenceVisitor` pair: Eloquent relation methods (`relates`), table naming convention and `$table` override (`maps_table`), migration `Schema::` calls (`touches_table`), job/event dispatch (`dispatches`), `Event::listen()` and provider `$listen` properties (`listens`), `Model::observe()` (`observes`), `Schedule::command()`/`->job()` (not yet asserted by a dedicated test, built alongside the others per the same pattern). `mapin:route`, `mapin:view`, `mapin:model` and `mapin:impact` were added, `mapin:impact` being the phase's gate centerpiece: a BFS over 13 reverse edge types, classifying each result into routes/views/jobs/commands/methods/classes with a one-hop heuristic (checks `meta.interfaces` for a `ShouldQueue` suffix, `meta.parent` for a `\Command` suffix) - a lightweight stand-in for the full class-category system section 3.4 describes, not that system itself.
+
+Verified with 27 Pest tests (the 15 from phase 1 plus 5 more unit tests for relation/table/migration/dispatch/observer/listener detection against the invented fixture app, still unbooted; 7 feature tests running `mapin:build` through a real Orchestra Testbench application boot - real `Route::get()`/`Route::post()` registration, a real container `bind()`, real Blade files on disk) - all green, PHPStan level 6 and Pint both clean.
+
+Two real bugs, again exactly the kind a passing test suite with loose assertions does not catch on its own:
+
+**Forward-reference edges silently dropped.** `BuildRunner`'s per-file loop upserted one file's nodes, then immediately resolved that same file's edges' target keys to database IDs, then moved to the next file - so an edge from file A to a class declared in file B, processed later in the same build, looked up an ID that did not exist in the store yet and was silently dropped (`insertEdges` skips edges it cannot resolve an ID for, by design, since a resolution can legitimately point outside the indexed set). This was invisible in phase 1 because DAGs of extraction order rarely mattered for the smaller edge set tested there; phase 2 surfaced it hard, because `RouteExtractor`/`BindingExtractor` ran and tried to resolve their `routes_to`/`binds` edges' target class nodes *before the per-file node-upsert loop had run at all* - on a fresh build every one of those edges was dropped, not just the unlucky ones. Root-caused by instrumenting `BuildRunner` with temporary `fwrite(STDERR, ...)` tracing (removed before this section was written) that printed the node-ID lookup result for every edge from one fixture method, showing `fromId=<real id>, toId=MISSING` for every single cross-file target. Fixed by splitting the build into three ordered passes inside the same overall build: upsert every file's own nodes first (its own transaction), *then* run route/binding extraction (their targets now exist), *then* resolve each file's references and only look up target IDs once every node any of them could point at - across every file *and* the routes/bindings - has been upserted.
+
+**Relation targets stored under the wrong key.** `relates`, constructor-assignment property types, and the `$listen` provider property were all extracted via `PhpParser\NodeFinder`, searching a method's or property's already-parsed subtree for a matching node - which runs entirely outside the shared `NodeTraverser`'s own traversal, so `NameResolver` (registered ahead of the extraction visitor in that same traverser) had not yet reached those nested `Name` nodes and had not resolved them. A relation like `$this->hasMany(Book::class)`, with `Book` imported via `use App\Models\Book;`, extracted the edge's target as the literal string `Book` rather than `App\Models\Book` - a node key nothing in the graph actually declares, so the edge pointed nowhere and (after the fix above) failed the ID lookup exactly like a real forward reference, just for a different underlying reason. Every one of phase 1 and phase 2's own unit test assertions for these edges used `str_contains($edge->toKey, 'Book')` rather than an exact match, and a bare `"Book"` satisfies that substring check exactly as well as `"App\Models\Book"` does - so the bug shipped with the tests that should have caught it passing throughout. Root-caused by comparing a direct, no-database call into `PhpExtractor`/`Resolver` (which produced the correct FQCN) against the same fixture run through `mapin:build` (which produced `class:Book`), then tracing `DeclarationVisitor`'s three `NodeFinder`-based call sites by hand. Fixed with a `resolveName()` helper on `DeclarationVisitor` that applies the same `uses`/namespace resolution `NameResolver` would have, used at all three sites (`findRelationCall`, `scanConstructorAssignments`'s two branches, `classConstName`). The existing test assertions were left as `str_contains()` - they still pass, now for the right reason - rather than widened while fixing an unrelated bug in the same pass.
+
+Measured against real code, not just the fixture: an unbooted, read-only extraction pass (no Laravel boot, so `routes_to`/`binds` are not exercised here) against a snapshot of the application from section 4.2 - 1,599 PHP and Blade files under `app/`, `routes/`, `config/`, `resources/views/` - completed in 12.3 seconds, producing 11,239 nodes and 39,999 edges (23,348 `calls`, 6,978 `declares`, 732 `relates`, 730 `includes`, 545 `instantiates`, 527 `renders`, 323 `touches_table`, 260 `maps_table`, 229 `extends`, 60 `resolves`, 47 `uses_trait`, 23 `dispatches`, 11 `implements`, 7 `observes`, 7 `uses_component`) and 666 `view` nodes. Sampled `relates` edges at this scale resolve to full FQCNs correctly, confirming the `resolveName()` fix holds beyond the fixture, not just on the case it was written against. One file failed to parse (a pre-existing PHP syntax error unrelated to Mapin) and was correctly reported as a build warning rather than aborting the run.
+
+**The booted-router gap, closed the same day.** `RouteExtractor`/`BindingExtractor` were then run against the same real application, this time fully booted - its own `Illuminate\Foundation\Application`, its own `vendor/autoload.php` required after Mapin's own (so Mapin's own dependency versions win for anything it ships, while app-only classes like `Illuminate\Foundation\Application` still resolve), the real console kernel bootstrapped exactly as `artisan` itself does it, against its own already-running local dev database (not shared, not production). This surfaced one real crash, not caught by any fixture: `RouteExtractor` assumed every entry in `Route::gatherMiddleware()` was a string alias, but Laravel also allows registering a middleware as a bare `Closure` directly, and this application does that on at least one route - `Cannot access offset of type Closure on array` at the exact line indexing `$middlewareAliases` by it. Fixed by skipping non-string middleware entries: a closure has no name stable across builds to key a graph node on, so there is nothing to record for it, the same reasoning already applied elsewhere for anything without a resolvable identity.
+
+With that fixed, the gate: **1,589 route nodes in the graph against 1,589 routes in the real, booted `Router::getRoutes()` - exactly matching, the phase's "100% of router routes present" wording met precisely, not approximately.** `routes_to` linked 1,536 of 1,579 controller-backed routes (the other 10 of 1,589 are closures, which correctly get no `routes_to` edge at all - there is no controller method to link to). The 43 unlinked controller-backed routes were sampled, not exhaustively audited - 11 were checked by hand - and every one checked resolved to either a route correctly outside Mapin's project scope (a `Route::controller()` group here wraps its actions in closures for a deliberately disabled module, and Laravel's own `route:list` reports the *group's* controller class as the action name with no `@method` even though the actual registered handler is a closure - `controllerTarget()` correctly declines to link this, since there genuinely is no controller method involved) or - the larger bucket - a route whose action names a method that grep confirms does not exist anywhere in `app/` at all: a real, pre-existing dead route in the application itself (would 500 if ever requested), not a Mapin gap. `binds` produced only 3 edges, all framework-internal (`Illuminate\Contracts\Console\Kernel`, `Illuminate\Contracts\Http\Kernel`, `Illuminate\Contracts\Pipeline\Hub`) - confirmed correct, not a gap, by grepping the real `app/` for `->bind(`/`->singleton(`: zero results, this application does not use explicit container bindings anywhere in its own code.
+
+Not yet done, tracked rather than skipped: `BladeExtractor` is regex-based, not compiler-based, as noted above; the golden-test apparatus from section 12 is still not built; `mapin:impact`'s job/command classification is the one-hop heuristic described above, not section 3.4's full category system; and the 14,793 unresolved rows the unbooted real-codebase run produced were not analyzed the way phase 0's spike numbers were - phase 2 did not repeat that measurement discipline, so there is no confidence rate to report here the way section 4.2 reports one for phase 0.
+
+### 1.6 What stands between phase 2 and practical daily use
+
+Assessed 2026-09-07, at Brandon's request, for what it would take to actually rely on Mapin day to day rather than as a project that passes its own tests. Consolidated here as one list because the individual items are otherwise scattered across 1.4, 1.5 and section 14 - this section adds nothing new to those, except the installation gap, which was not tracked anywhere before now.
+
+1. ~~No MCP server yet (phase 3 itself).~~ **Closed the same day, see 1.7** - `mapin:mcp` now exists and was verified with a real JSON-RPC round-trip, not just the CLI.
+2. ~~Not installed anywhere it would actually be used.~~ **Closed in 1.9** - real `require-dev` entry in a real host application (on its own Laravel-upgrade branch, not its main working branch), real `.mcp.json` entry, checked by actually running it. No build hook analogous to the previous tool's post-deploy rebuild exists yet, though - `mapin:build` still needs to be run by hand, or from a manually-added git hook (section 16's open question about `--install-hook`).
+3. **`BladeExtractor` is regex-based, not the compiler-based approach section 4 originally named** - see 1.5. Works on every pattern tested so far; more exotic Blade (dynamic `@include($var)`, conditional directives) is unmeasured, not confirmed-broken.
+4. **No golden-test apparatus** (section 12) - regressions are only caught by the specific edges each test happens to assert, not a broad snapshot diff.
+5. **~27% of references in the real, unbooted benchmark landed in `unresolved`, unaudited** - phase 0's spike bucketed every unresolved case by cause before calling the number acceptable; phase 2 has not repeated that discipline, so this fraction is unexplained, not necessarily concerning.
+
+---
+
+### 1.7 Phase 3 results
+
+Built the same day, immediately after 1.6 identified the MCP gap as the highest-value remaining piece. `Mapin\Query\Query` is now the one service backing every tool (SPEC.md section 6): one method per tool in section 6.1's table (`find`, `node`, `callers`, `callees`, `impact`, `path`, `route`, `view`, `model`, `unresolved`, `stats`), each returning a `QueryResult`, plus `envelope()` wrapping that in the `{found, query, result|suggestions, graph}` contract - including the `graph` staleness block (`built_commit` vs. `head_commit` via `Mapin\Query\GitStatus` shelling out to `git`, `files_changed_since_build`), which section 8 always described but nothing built until now. `find`, `callers`, `route`, `view`, `model`, `impact` and `stats` (the existing CLI commands from phases 1-2) were refactored onto this shared service rather than left with their own ad-hoc query logic and response shapes; `node`, `callees`, `path` and `unresolved` are new. `mapin:query {tool} --arg=key=value` is the generic dispatcher section 9 describes, driving the exact same `ToolSpec` instances the MCP server calls - a CLI answer and an MCP answer to the same question share code, not just a contract.
+
+The MCP side is `laravel/mcp` v1.0.0-beta.1 (its actual installed API read directly from `vendor/laravel/mcp`, including its own Boost skill documentation, rather than assumed from training data, given its beta status flagged as a risk in section 15) behind the two-layer split section 6.1 always specified: `src/Mcp/Tools/*` (11 `ToolSpec` implementations, one per tool, each depending only on `Query`) and `src/Mcp/Adapters/*` (an `AbstractToolAdapter extends Laravel\Mcp\Server\Tool` handling schema-building and request/response translation generically, plus one one-line concrete subclass per tool - the only classes that import anything from `laravel/mcp` outside the adapters directory itself). `MapinServer extends Laravel\Mcp\Server` registers all 11. `mapin:mcp` starts it over stdio directly - `new StdioTransport; $server->start(); $transport->run();`, mirroring `Laravel\Mcp\Server\Registrar::startServer()`'s own internal pattern - so a host app needs nothing registered in its own `routes/ai.php`; the command is self-sufficient, matching section 9's listing. `mapin:doctor` checks PHP/extension requirements, whether the router is bound, graph existence and staleness, and the unresolved ratio.
+
+Verified with 9 new Pest tests (`tests/Feature/Phase3Test.php`) exercising the real MCP protocol path via `laravel/mcp`'s own testing helper (`MapinServer::tool(SomeToolAdapter::class, [...])->assertOk()->assertStructuredContent(...)`, the pattern the package's own documentation recommends) - not a mock, an actual `tools/call` JSON-RPC request handled by `CallTool`/`ToolInvoker` and answered through `AbstractToolAdapter::handle()`. Covers: the full envelope shape including the `graph` block, a route lookup resolving through to a real controller method, an impact query, a no-argument stats call, the `found: false` + labelled-`suggestions` contract for a name that matches nothing, and `find`'s exact-vs-fuzzy behavior. Two more tests drive `mapin:query` and one drives `mapin:doctor`. All 36 tests in the suite (27 carried over from phases 1-2, 9 new) pass, PHPStan level 6 and Pint are clean. Beyond the automated suite, the exact stdio wiring `mapin:mcp` uses (`StdioTransport` + `MapinServer::start()`, not the test helper's separate code path) was checked by hand with a raw JSON-RPC string fed straight to the transport's registered handler inside a real Testbench boot - confirmed a well-formed `tools/call` response comes back with the full envelope nested correctly under `structuredContent`, so the command itself, not just the tool logic behind it, is known to work.
+
+Three real issues surfaced building this, not from imagining edge cases in advance:
+
+1. **`find` needed a genuine behavior change, not just a new response shape.** Every existing caller of `findNodes()` used its LIKE-based matching unconditionally - exactly the "approximate match with full confidence" failure mode section 6's "never answer with an approximate match without saying so" rule exists to prevent. Query::find() now requires an exact hit (key, full name, or - since a class node's own `name` is its FQCN, not its short name - the segment after the last backslash) unless `fuzzy: true` is passed, with LIKE-based hits demoted to labelled `suggestions` otherwise. The first version of this was too strict: it initially failed a phase 1/2 test doing a plain short-class-name search, because "short class name" is explicitly one of `find`'s exact-match targets in section 6.1's own table, not something that should need `fuzzy: true`.
+2. **The container didn't know how to build `Query` or `SqliteStore`.** CLI commands construct both manually (`new Query(new SqliteStore($storagePath), base_path())`) because they already have `$storagePath` and `base_path()` in hand. `laravel/mcp`'s `ToolInvoker` resolves a tool's `handle()` through `Container::getInstance()->call(...)`, which needed both bound as singletons in `MapinServiceProvider::register()` - caught immediately by every MCP test throwing `BindingResolutionException` before the binding was added, not a subtle bug.
+3. **The known `docker cp` directory-nesting pitfall (documented in this project's own memory from phase 1) bit again, compounded by a bash heredoc escaping mistake.** Generating the 11 adapter classes from a shell loop produced a broken `use Mapin\Mcp\Tools${tool};` line (a literal, unexpanded `${tool}`) in every one of them - an escaping error in the heredoc. Fixed on disk, then synced with `docker cp .../Adapters dev-container:/tmp/mapin/src/Mcp/Adapters` (no trailing `/.`/`/`) - which, because source and destination both end in `Adapters`, nested the whole directory one level deeper instead of overwriting it, so PHPStan kept reporting the exact same syntax error against the untouched stale copy underneath. Re-synced correctly (`rm -rf` the container's copy first, then `docker cp .../Adapters/. dev-container:/tmp/mapin/src/Mcp/Adapters/`) before it was traced to two separate mistakes stacked on each other rather than one.
+
+Not yet done, tracked rather than skipped: `hubs`, `communities` and `docs` are not registered on `MapinServer` - they need phase 4/5 data (Markdown module, community detection) that does not exist yet, so leaving them out is accurate, not a stub; `impact`'s `types?` filter from section 6.1's table was never implemented (`ImpactCommand` didn't have it before this phase either - not a regression, just still open); and the MCP server has only been verified against Testbench's invented fixture, not run against a real application the way phase 2's extractors were - closing that gap, and installing Mapin somewhere it would actually be reached from a normal session (section 1.6 item 2), are the two concrete items left before this is more than a project that passes its own tests.
+
+---
+
+### 1.8 Hardening pass
+
+The real application from section 4.2 was mid-edit in another working session at the time, so validating Mapin against it (the two items 1.7 closed with) was deliberately deferred; this pass closes debt already on the books instead, at Brandon's explicit request to harden rather than add new phase surface while that window is closed.
+
+**The golden-test apparatus from section 12 now exists.** `tests/Feature/GoldenTest.php` builds the fixture app in full and dumps every node key and every `{type, from, to, resolution}` edge, sorted for determinism, diffed against a committed `tests/Golden/expected.json` (103 nodes, 97 edges as of this pass) - regenerated deliberately with `MAPIN_UPDATE_GOLDEN=1`, never to silence a failure without first understanding why the graph changed shape. Building this required first auditing the fixture app against section 12's own exhaustive pattern list, since a golden snapshot of an incomplete fixture only locks in what was already being tested, not what section 12 actually asks for.
+
+That audit found real gaps, not just missing test decoration - four patterns had working extractor/resolver code behind them with zero coverage anywhere, and one had no code behind it at all:
+
+1. **Invokable controllers routed to nothing.** `RouteExtractor::controllerTarget()` treated any action without an `@method` as an unresolvable closure - true for a real closure, but also exactly the shape of `Route::get($uri, SomeInvokableController::class)`, a legitimate, common Laravel pattern. Fixed to resolve the bare-class case against the controller's own `__invoke` method, the same way Laravel itself does at dispatch time. This is the one item in this pass that is a genuine bug fix, not just added coverage - verified with a dedicated fixture (`Fixture\Http\Controllers\ReportController`) and its own test, independent of the golden snapshot.
+2. **`$table` override had no fixture exercising it at all** - `Book` now declares `protected $table = 'library_books';`, verified against the naming-convention case already covered by `Author`.
+3. **Scheduled-command detection (`Schedule->job()`/`->command()`) had no fixture or test since it was built alongside the rest of phase 2's detection code** - added `Fixture\Providers\BookScheduleProvider` and a dedicated test.
+4. **Middleware alias resolution to its bound class had no fixture or test** - added `Fixture\Http\Middleware\EnsureTenant`, aliased and applied to a new route, with a test asserting the middleware node's `meta.class` resolves correctly, not just that the edge exists.
+
+Wiring the invokable-controller fixture surfaced a second, unrelated gap: `Fixture\*` classes had never had a real PSR-4 autoload mapping (`composer.json`'s `autoload-dev` only mapped `Mapin\Tests\` to `tests/`) - every existing test worked anyway because `SomeClass::class` and `[Controller::class, 'method']` route actions never trigger autoloading, only a bare-class-string route action does (Laravel calls `method_exists()` on it immediately at registration, which does trigger autoloading). Added `"Fixture\\": "tests/Fixtures/app/"` to `autoload-dev.psr-4` - a fixture app whose classes were never really autoloadable was itself a small, latent gap between "the fixture behaves like a real Laravel app" and what was actually true.
+
+Four new named tests (`tests/Feature/HardeningTest.php`) assert each of the four patterns above independently of the golden snapshot - discoverable and specific if the golden file ever needs regenerating for an unrelated reason, rather than relying on a diff of a 200-line JSON file to communicate what changed and why. All 41 tests (37 carried over, 4 new, golden test included) pass, PHPStan level 6 and Pint are clean.
+
+**Deliberately not done in this pass**, to keep it bounded rather than open-ended: section 12's fixture list also asks for method injection (as distinct from constructor injection), a static factory method, Eloquent local scopes, every relation kind (only `hasMany`/`belongsTo` are exercised, of the nine `RELATION_KINDS` supports), route groups and `Route::resource()`, and untyped constructor injection - none of these have a known gap in the underlying code the way the four items above did, so adding fixture coverage for them is lower-value busywork rather than hardening, and was left for whenever it is next convenient rather than done here for completeness's own sake. `route()`/`view()` calls written inside a `.blade.php` file (as opposed to PHP) are not detected by `BladeExtractor` at all - a real, not cosmetic, gap, but building that detection is new extractor surface, not hardening of what exists, so it was named rather than built; see the open item below.
+
+---
+
+### 1.9 The two phase 3 gaps, closed
+
+Done the same day, once Brandon's other working session finished editing the real application from section 4.2 and the window this whole spec keeps insisting on respecting (never touch a repo mid-edit in another session) opened back up.
+
+**Gap 1: the MCP server, run for real, not just against the fixture.** Booted the real application (read-only - never wrote anything under its own path beyond Mapin's own throwaway build during this check) and drove `MapinServer` over the exact `StdioTransport` wiring `mapin:mcp` uses, sending real `tools/call` requests. `find` resolved a real class by short name; `route` returned a real route's full middleware stack (nine aliases deep) and the view it renders; `impact` on the same heavily-called static method phase 0's spike measured at 104 call sites correctly listed 20+ real routes reachable from it at depth 2; `stats` and the `graph` staleness block both reported correctly. This is the confirmation phase 2's extractor-level validation could not give on its own: the full query layer, over the actual MCP wire protocol, answering real questions about real code.
+
+That same check surfaced a fourth real bug, in `model()` this time, not caught by the fixture because the fixture has no two classes whose short names collide with a search term the way real, large-scale code does: searching for a real Eloquent model by its short name returned an unrelated console command whose class name happened to contain the same substring, instead of the actual model. `Query::model()` had never been updated to use the exact-short-name matching `find()` got in 1.7 - it just took `findNodes()`'s first LIKE-ranked row unconditionally, so a search term matching several classes by substring, none of them exactly, silently returned whichever one SQLite happened to return first. Fixed by extracting `find()`'s matching rule into a shared `Query::exactMatches()` and using it in `model()` too; unlike `find()`, `model()` has no `fuzzy` argument to fall back to (section 6.1 gives it only `name`), so anything other than exactly one exact match - zero, or more than one short name colliding across namespaces - is now reported as not found with candidates, never a silent pick. Covered by a new fixture-based regression test reproducing the same ambiguity ("Controller" matches four fixture controllers, none of them exactly). 42 tests total, PHPStan and Pint clean.
+
+**Gap 2: installed somewhere a normal session actually reaches it - genuinely, not a demo.** This surfaced a real blocker before it surfaced a real result: the host application's main working branch is still on Laravel 10 (`laravel/framework: ^10.8`), and Mapin's own compat floor is `illuminate/* ^11.45|^12.0|^13.0` - a version conflict, not a workaround-able one, since `laravel/mcp` and the JSON Schema support it needs are themselves Laravel 11+-only. A Laravel 10→13 upgrade this project's own compat decision assumed already existed turned out to live on unmerged branches instead (one per target version - Laravel 11, 12 and 13 - all committed the same day). Installed against the Laravel 13 branch (PHP 8.3, matching the notebook's own container PHP version exactly), at Brandon's explicit choice over waiting for the merge or lowering Mapin's own floor.
+
+Getting there took three real infrastructure changes, not just a `composer require`:
+
+1. `~/mapin` was not visible inside the host application's own dev container at all (it only ever mounted the host application's own working copy) - a `composer path` repository needs the target directory actually readable from wherever `composer install` runs. Brandon chose mounting over copying Mapin's source into the host application's own tree, so `~/mapin` is now bind-mounted into that container at the identical absolute path, added to the notebook-dev pilot project's own compose file (a separate, personal "one stack per developer" setup, not the host application's own compose files) and applied with a scoped, single-service recreate, not a full stack restart.
+2. Mapin's own git repo has zero commits (still true - "git init hecho, sin commits" from the very first day of this project). A `path` repository still works against an uncommitted git working tree, but Composer reports its version as the synthetic `dev-main`, which `minimum-stability: stable` rejects outright, and which then exposed that `laravel/mcp` itself is only available as a beta release with no stable tag - a `stability-flags` entry does not apply to a transitive dependency pulled in by another package, only to something required directly, so the fix was project-wide `minimum-stability: beta` (kept safe by the `prefer-stable: true` already in place, which still prefers a stable release for every other package that has one).
+3. Both the host application's own working copy and `~/mapin` needed a git `safe.directory` exception inside the container - bind-mounted repos owned by the host user look "dubious" to git running as the container's own user, and Composer shells out to git for path-repository version detection.
+
+`nexvia-solutions/mapin` is now a real `require-dev` entry, symlinked from `~/mapin`, and `mapin:build`/`mapin:doctor`/`mapin:mcp` all run as ordinary `artisan` commands against the host application's own real graph at `storage/mapin/graph.sqlite` (added to `.gitignore` - a rebuildable artifact, never meant to be committed). The host application's own `.mcp.json` (already tracked, already had an unrelated MCP server entry) got a `mapin` entry running `mapin:mcp` inside its own container - verified by running that exact command line with a piped raw JSON-RPC request, not just trusting the config, so this is the same command a client actually invokes, checked end to end, not merely declared.
+
+**One thing to flag, not hide:** closing this gap required checking out the Laravel 13 upgrade branch in the host application, so Brandon's working branch there changed as a side effect of this work, not something decided in advance - worth knowing about before doing anything else there.
+
+**A second, unrelated operational gap surfaced once the dev container was recreated for gap 2's mount** (this section, above): `phpstan.neon` had never actually made it into `~/mapin` on the host at all. Every "PHPStan clean" claim across this entire spec, from phase 0 onward, was true against a config file that only ever existed inside the container's ephemeral working copy - never synced back alongside `src/`, `tests/` and `config/` the way this project's own established sync habit called for, because sync passes were always scoped to those specific directories, never root-level files. It surfaced now, not earlier, because recreating the container for gap 2's mount destroyed that ephemeral copy for good. Reconstructed from scratch (`level: 6`, `paths: [src]` only - confirmed by process of elimination: adding `tests/` or `bin/` back in immediately produced 33 and 1 pre-existing errors respectively, neither of which this spec ever reported, so neither was ever actually in scope) and verified clean again. A companion `pint.json` (also never present before) now excludes `spike/` for the same reason - `spike/resolve.php`'s one style violation was real and pre-existing, just never caught, since Pint's own cache file lived in the same now-gone ephemeral copy. Both are ordinary config files now committed to the tree like everything else, not a special case going forward - this was a one-time consequence of relying on a disposable location as the only home for either of them.
+
+---
+
+## 2. Architecture
+
+Pipeline, run by `mapin:build`:
+
+```
+discover  ->  extract (per file, parallel-safe)  ->  index symbols  ->  resolve references  ->  store  ->  report
+```
+
+1. **Discover**: list files under configured paths, respecting `.gitignore` and `exclude` globs. Compute content hash. Compare with stored hashes to select changed, added and deleted files (incremental) or everything (`--full`).
+2. **Extract**: each file goes through every `Extractor` that supports it. An extractor returns a `Fragment`: declared nodes, references (not yet linked) and unresolved expressions. Extractors never see other files.
+3. **Index**: build the `SymbolIndex` (FQCN, methods, functions, view names, route names, table names, doc sections) from stored fragments plus the new ones.
+4. **Resolve**: turn references into edges using the index, the type resolver and, when booted, the container bindings and the router. Every edge gets a `resolution` kind and a `confidence`.
+5. **Store**: write nodes and edges to SQLite in one transaction per build. Deleted files remove their nodes and edges.
+6. **Report**: write a `builds` row with counts, warnings, duration, commit. A graph that shrinks is stored anyway and the shrink is reported as a warning. Mapin never refuses to overwrite.
+
+Extractors that need the application booted (routes, container bindings, Blade compiler) are skipped with a warning when `--no-boot` is used.
+
+---
+
+## 3. Graph model
+
+### 3.1 Node types and keys
+
+Every node has a unique `key` built from its type and a stable identifier. Keys are the public handle for every query.
+
+| Type | Key format | Notes |
+|---|---|---|
+| `file` | `file:app/Services/Billing.php` | path relative to project root; `lang` in meta: php, blade, md, js |
+| `class` | `class:App\Services\Billing` | kind in meta: class, interface, trait, enum, anonymous; `category` derived (see 3.4) |
+| `method` | `method:App\Services\Billing::charge` | visibility, static, return type, line in meta |
+| `function` | `function:money` | global functions |
+| `route` | `route:GET /admin/orders/{id}` | name, action, middleware, domain in meta; searchable by name |
+| `view` | `view:admin.orders.show` | Blade views; file linked via `declares` |
+| `component` | `component:alert` | Blade class or anonymous component |
+| `middleware` | `middleware:auth` | alias; resolved class in meta |
+| `table` | `table:orders` | from models, migrations and `DB::table` |
+| `doc` | `doc:docs/billing.md` | Markdown file |
+| `section` | `doc:docs/billing.md#refunds` | heading anchor |
+| `concept` | `concept:refund` | only from the optional LLM layer |
+| `external` | `external:Illuminate\Support\Facades\DB` | referenced class not found in the project |
+
+Anonymous classes (Laravel migrations) get a synthetic key `class:anonymous@database/migrations/2024_01_01_create_orders.php` so their methods hang from a class node, not from the file.
+
+### 3.2 Edge types
+
+| Type | From -> To | Meta |
+|---|---|---|
+| `declares` | file -> class, function, view, doc; class -> method | |
+| `extends` | class -> class | |
+| `implements` | class -> class | |
+| `uses_trait` | class -> class | |
+| `calls` | method -> method or external | `member`, `resolution`, `confidence` |
+| `instantiates` | method -> class | `resolution` |
+| `injects` | class -> class (constructor); method -> class (method injection) | `param` |
+| `binds` | class (abstract) -> class (concrete) | from container; `singleton` |
+| `resolves` | method -> class | `app(X::class)`, `resolve()`, `App::make()` |
+| `routes_to` | route -> method or class (invokable) | |
+| `uses_middleware` | route -> middleware | |
+| `renders` | method -> view | `view()`, `View::make()`, `response()->view()` |
+| `includes` | view -> view | `directive`: include, includeIf, each, extends |
+| `uses_component` | view -> component | |
+| `links_route` | view or method -> route | from `route('name')` and `to_route()` |
+| `relates` | class -> class (models) | `relation`: hasMany, belongsTo, ...; `method` |
+| `maps_table` | class -> table | from `$table` or naming convention; `source` |
+| `touches_table` | class or method -> table | migrations (`op`: create, alter, drop) and `DB::table` |
+| `dispatches` | method -> class (job or event) | `via`: dispatch, event, Bus, Event facade |
+| `listens` | class -> class (event) | from `$listen`, `Event::listen`, `#[ListensTo]`-style discovery |
+| `observes` | class -> class (model) | `Model::observe()` and `#[ObservedBy]` |
+| `schedules` | method -> class (command) or method | from `Kernel::schedule` and `routes/console.php` |
+| `documents` | section -> any node | from Markdown mentions; `match`: class, path, route, table |
+| `links_doc` | doc -> doc | Markdown links |
+| `mentions` | section -> concept | LLM layer only |
+| `relates_concept` | concept -> concept | LLM layer only; `source: llm` |
+| `requests` | file (js) -> route | phase 7; `verb`, `url` |
+
+### 3.3 Resolution kinds and confidence
+
+Every `calls`, `instantiates`, `resolves` and `renders` edge records how the target was determined.
+
+| Resolution | Meaning | Confidence |
+|---|---|---|
+| `static` | `Foo::bar()` with `Foo` resolvable | 1.0 |
+| `new` | `new Foo()` or `(new Foo)->bar()` | 1.0 |
+| `self`, `parent`, `this` | `self::`, `parent::`, `$this->bar()` | 1.0 |
+| `typed_property` | `$this->svc->bar()` with declared or promoted type | 1.0 |
+| `param` | `$svc->bar()` where `$svc` is a typed parameter | 1.0 |
+| `container` | `app(Foo::class)->bar()`, binding resolved from the booted container | 1.0 |
+| `constructor_assignment` | untyped property assigned from a typed constructor parameter | 0.8 |
+| `local_assign` | local variable assigned from `new`, static factory or typed source in the same method | 0.8 |
+| `return_type` | one hop through a method with a declared return type | 0.8 |
+| `facade` | a facade's own `@method static` docblock names the return type | 0.8 |
+| `cast` | an Eloquent `$casts`/`$dates` entry, or the default `created_at`/`updated_at`/`deleted_at` cast | 0.8 |
+| `catch` | `catch (SomeException $e)` types `$e` for the block | 1.0 |
+| `eloquent` | `Model::query()`, `Model::where(...)->first()` and similar chains, target is the model | 0.7 |
+| `docblock` | `@var` or `@param` annotation | 0.7 |
+| `interface` | call on an interface with a single implementation in the project, no binding found | 0.6 |
+| `unique_member` | method name defined by exactly one class in the project (heuristic, off by default) | 0.4 |
+| `unresolved` | none of the above; stored in `unresolved`, not as an edge | 0.0 |
+
+A value carried through a local variable assignment (`local_assign`) or forwarded through a relation or facade keeps the resolution kind of its underlying source; confidence is the minimum of the source's confidence and the kind above, never higher than either alone. `catch` is 1.0, not 0.8, because PHP requires every catch type to implement `Throwable`, which is a language guarantee rather than an inference.
+
+Query results report the minimum confidence along the path. Callers can filter with `min_confidence`.
+
+### 3.4 Class categories
+
+`category` is derived, never hardcoded to a directory: `controller` (extends a class named `Controller` or handles a route), `model` (extends `Illuminate\Database\Eloquent\Model`), `job` (implements `ShouldQueue` or uses `Dispatchable`), `event`, `listener` (appears as a listener), `middleware`, `command` (extends `Command`), `provider`, `migration`, `request` (extends `FormRequest`), `resource`, `policy`, `service` (fallback for classes under a namespace segment `Services`), `other`. The mapping is configurable in `config/mapin.php`.
+
+---
+
+## 4. Extractors
+
+All extractors implement:
+
+```php
+interface Extractor
+{
+    public function supports(SourceFile $file): bool;
+    public function requiresBoot(): bool;
+    public function extract(SourceFile $file, ExtractionContext $ctx): Fragment;
+}
+```
+
+| Extractor | Input | Produces | Boot |
+|---|---|---|---|
+| `PhpExtractor` | `*.php` under configured paths | classes, methods, functions, references (calls, new, static, injections, dispatch, relations, `view()`, `route()`, `DB::table`, `Schema::*`, `$listen`, `observe`) | no |
+| `BladeExtractor` | `*.blade.php` | view node; compiles the template with the app's `BladeCompiler` and runs the PHP reference visitor on the output, so `@include`, `@extends`, components, `route()` and `view()` come from real PHP, not regex | yes (falls back to a regex directive scanner with `--no-boot`) |
+| `RouteExtractor` | booted router | route nodes, `routes_to`, `uses_middleware` | yes |
+| `BindingExtractor` | booted container | `binds` edges for abstract to concrete; feeds the type resolver | yes |
+| `ScheduleExtractor` | `Console/Kernel.php`, `routes/console.php` | `schedules` | no |
+| `MarkdownExtractor` | `*.md` | doc and section nodes, `links_doc`, `documents` (deterministic mentions) | no |
+| `LlmConceptExtractor` | sections | `concept`, `mentions`, `relates_concept` | no, and only with `--with-llm` |
+| `JsExtractor` | `*.js`, `*.jsx`, `*.ts`, `*.tsx` | `requests` edges by matching literal URLs to route URIs | no (phase 7) |
+
+Extractors are registered through the service provider and can be added by the host app or by third-party packages (Livewire, Inertia, Filament adapters are explicitly out of the core and welcome as plugins).
+
+### 4.1 Type resolution rules (PhpExtractor + Resolver)
+
+Per class, the resolver builds a scope:
+
+1. `$this`, `self`, `static`, `parent` from the class declaration.
+2. Property types: declared types, promoted constructor parameters, untyped properties assigned in the constructor from typed parameters, `@var` docblocks.
+3. Method scope: typed parameters, local variables assigned from `new`, static factories with declared return types, `app()`/`resolve()`, `$this->typedProperty`, and method calls with declared return types.
+4. Interfaces: if the container has a binding, use it; otherwise, if the project has exactly one implementation, use it with `interface` resolution; otherwise unresolved with the candidates listed.
+5. Eloquent chains: a static call on a model class returns a builder for that model; `first()`, `find()`, `create()`, `firstOrFail()`, `sole()` return the model; `get()` returns a collection (chain stops). Member calls on a builder are recorded as `calls` to the model with `eloquent` resolution when the model defines the method (scopes are matched as `scopeX`), otherwise as external Eloquent calls.
+6. Facades are recorded as `external` targets and excluded from `impact` by default.
+7. Docblock types are unwrapped before use, not read literally, because Illuminate and PHPStan-annotated userland code both rely on syntax a plain `@return Type` reader cannot parse:
+   - **Conditional return types** (`@return ($key is null ? \Illuminate\Http\Request : mixed)`), used throughout the framework for helpers and methods whose result depends on whether an argument was passed (`request()`, `session()`, `Request::route()`, and dozens more). The resolver takes the `is null` true branch, because that is the no-argument case, which is overwhelmingly the case used for further chaining.
+   - **Generic type parameters** (`@return \Illuminate\Database\Eloquent\Builder<static>`, `Collection<int, User>`), used across Eloquent's own source for `Model::on()`, `newQuery()`, and most builder-returning methods. The resolver strips the `<...>` suffix and resolves the base class; the type parameter itself is not modelled.
+   - Both are Laravel and PHPStan-specific conventions, not general PHPDoc, and both must be handled for Eloquent chain resolution to work at all, since the framework's own base classes use them pervasively.
+8. `catch (SomeException $e)` types the caught variable for the rest of the catch block at confidence 1.0. Any variable typed to a class, indexed or not, gets PHP's `Throwable` interface methods (`getMessage`, `getCode`, `getFile`, `getLine`, `getTraceAsString`, `__toString` as scalar-returning; `getPrevious` returning `Throwable` again, so a further `->getMessage()` still chains) resolved without needing the concrete exception class in the index, because every catchable type in PHP guarantees them by language contract, not by convention.
+9. A small, explicit table of manager-to-contract forwarding is consulted when a direct method lookup fails on a manager or factory class: today this covers `Illuminate\Contracts\Auth\Factory` forwarding to `Illuminate\Contracts\Auth\Guard`, because Laravel's `AuthManager` implements `Factory` but answers `user()`, `id()`, `check()` and similar through `__call` delegation to the resolved guard. This is a named, documented quirk of a specific class, not a general fallback, and the table stays short by design; broadening it further belongs to phase 2 review, not an unlimited allowlist.
+10. A bare class name with no matching `use` import and no project class of that name is checked against Laravel's own default facade aliases (`DB`, `Auth`, `Cache`, `Log`, `Str`, `Schema`, `Storage`, and the rest of the list Laravel registers via its `AliasLoader` from `config/app.php`) before being left unresolved. Code written as `\DB::table(...)` or, in an unnamespaced file, plain `DB::table(...)`, relies on that runtime `class_alias()` registration, which no import statement makes visible to static analysis; the table mirrors a fixed, documented list Laravel itself ships, not project-specific guessing.
+11. Eloquent relation methods (`hasMany`, `belongsTo`, `hasOne`, `belongsToMany`, `morphMany`, `morphOne`, `morphToMany`, `hasManyThrough`, `hasOneThrough`) return a `Relation` subclass that forwards any method it does not itself declare to the query builder of the related model, via Laravel's `ForwardsCalls` trait. Reading the method body for `return $this->hasMany(Target::class)` (or the same call further chained, e.g. `->withDefault()`) gives the related model that a caller chaining `.where()`, `.get()`, `.count()` and similar actually reaches; a short, explicit list of relation-only mutators (`attach`, `sync`, `associate`, `save`, and similar) is excluded from that forwarding since they do not return a builder. The same relation information resolves the model accessed as a bare property (`$order->items`), which Eloquent's `__get` resolves to the related model or a collection of them depending on whether the relation is singular or plural, never to the `Relation` object itself.
+12. A model's `$casts` and legacy `$dates` arrays are read for date-family cast types (`date`, `datetime`, `immutable_date`, `immutable_datetime`, and their `custom_datetime`/format-suffixed variants) and typed as `Carbon\Carbon` or `Carbon\CarbonImmutable`; these are attributes Eloquent's `__get` casts at runtime, never real PHP properties, so no other part of the source names their type. `created_at` and `updated_at` resolve to `Carbon\Carbon` on every model by the same default even with no explicit cast entry, and `deleted_at` does the same when the model uses `SoftDeletes`, because Eloquent applies these casts unconditionally, not by convention a project could deviate from silently.
+13. Anything else becomes an `unresolved` row with the expression, receiver hint and member name, so it can be listed and improved later.
+
+Heuristic resolution (`unique_member`) is disabled by default and enabled with `--heuristics`. It never silently upgrades to a confident edge.
+
+### 4.2 Phase 0 measurements
+
+Measured with a standalone script (`nikic/php-parser` plus the rules above, no package code) against `app/` of a real Laravel 11 application: 907 files, 911 project classes, indexed together with `Illuminate/*` and `nesbot/carbon` for return-type resolution. One file failed to parse (a `??` used in a position this php-parser version rejects) and was skipped and reported, matching the always-skip-and-report rule in section 13.
+
+| Stage | Resolved at any confidence | Resolved at confidence >= 0.8 | Unresolved |
+|---|---|---|---|
+| Baseline (rules 1 to 6 only) | 49.7% | 26.9% | 13,684 calls |
+| + rule 7 (conditional types, generics) and Carbon indexing | 76.7% | 46.9% | 6,346 calls |
+| + rule 8 (catch typing) and rule 9 (auth forwarding) | 79.2% | 49.4% | 5,660 calls |
+| + rules 10 to 12 (facade aliases, relation forwarding, casts) | 84.1% | 51.5% | 4,317 calls |
+
+That is a 68% cut in unresolved calls (13,684 down to 4,317) across the two rounds of measurement, entirely from rules grounded in a documented Laravel or PHP behaviour confirmed against this application's real source before being coded, never from a guessed heuristic.
+
+Restricted to member calls whose receiver resolves to a class declared in the project (the ones that actually feed `impact` and `callers`, 9,589 of the calls above): 100% resolve at confidence 0.7 or higher, 18.1% at confidence 0.8 or higher. The gap between 0.7 and 0.8 is not a resolver weakness: 60% of these calls are Eloquent chains, which section 3.3 caps at confidence 0.7 by design, because scope and macro resolution on a builder carries real uncertainty a typed property does not. This is why section 1.2 states the project-receiver criterion as two thresholds (0.7 and 0.8) instead of one, unlike the phase 0 gate's first draft, which asked for 80% of all calls at confidence 0.8 and was unreachable by the confidence model in section 3.3 itself, not by a shortfall in the extractor.
+
+All three known failure cases from the previous tool resolved at confidence 1.0 throughout every stage above: a constructor-promoted-property injection (10 call sites), a service reached through both `app(X::class)->method()` and `new X()` in different controllers (13 call sites), and a facade-style class called statically from 20 different controllers (104 call sites).
+
+Remaining unresolved calls (4,317) break down as: chains through a method whose return type is still unmodelled (1,984, the largest single bucket, mostly further Laravel/Illuminate return types and third-party packages such as a PDF generator, a spreadsheet writer and a server-side datatable library that a real installation would index alongside the app's own `vendor/`, but that this spike deliberately did not chase beyond Illuminate and Carbon), untyped parameters and untyped local variables (1,118 plus 764, a property of the code being analyzed, not of the resolver, and explicitly out of scope per section 1.3), static calls on an unindexed third-party class (106), and array element access (40, `$array['key']->method()`, out of scope per section 1.3). None of the remaining categories were found to be extractor defects; each was inspected against real source before being left unresolved.
+
+---
+
+## 5. Storage
+
+SQLite file at `storage/mapin/graph.sqlite` (path configurable). Schema version stored in `meta`; a schema change bumps the version and triggers a full rebuild.
+
+```sql
+CREATE TABLE meta      (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE files     (id INTEGER PRIMARY KEY, path TEXT UNIQUE, lang TEXT, hash TEXT, size INTEGER, extracted_at TEXT);
+CREATE TABLE nodes     (id INTEGER PRIMARY KEY, type TEXT, name TEXT, key TEXT UNIQUE, file_id INTEGER, line INTEGER, meta TEXT);
+CREATE TABLE edges     (id INTEGER PRIMARY KEY, type TEXT, from_id INTEGER, to_id INTEGER, file_id INTEGER, line INTEGER,
+                        resolution TEXT, confidence REAL, meta TEXT,
+                        UNIQUE(type, from_id, to_id, file_id, line));
+CREATE TABLE unresolved(id INTEGER PRIMARY KEY, file_id INTEGER, line INTEGER, kind TEXT, expression TEXT,
+                        receiver_hint TEXT, member TEXT, candidates TEXT);
+CREATE TABLE builds    (id INTEGER PRIMARY KEY, started_at TEXT, finished_at TEXT, commit_hash TEXT, mode TEXT,
+                        files_seen INTEGER, files_changed INTEGER, files_affected INTEGER, nodes INTEGER, edges INTEGER,
+                        unresolved INTEGER, warnings TEXT);
+CREATE TABLE symbol_deps(file_id INTEGER, symbol TEXT, PRIMARY KEY (file_id, symbol));
+CREATE VIRTUAL TABLE nodes_fts USING fts5(name, key, content='nodes', content_rowid='id');
+CREATE INDEX edges_from ON edges(from_id, type);
+CREATE INDEX edges_to   ON edges(to_id, type);
+CREATE INDEX nodes_type ON nodes(type, name);
+CREATE INDEX symbol_deps_symbol ON symbol_deps(symbol);
+```
+
+A schema version bump drops and recreates every table (`Schema::reset()`) before `install()` runs, rather than attempting to migrate an old table's columns in place - a stale schema is a full rebuild by construction, exactly as this section always said, not merely as a fallback if a column happens to be missing.
+
+**Incremental builds and cross-file invalidation (built and measured, see 1.4).** A file whose hash is unchanged keeps its nodes and edges - unless it depended on something a changed file altered. Every class, interface, trait or function `SymbolIndex` is asked about while resolving one file's references is recorded into `symbol_deps` for that file (`SymbolIndex::startTracking()`/`stopTracking()`, wired into `ReferenceVisitor`'s four call sites and into `record()`'s own interface-substitution and target-key lookup, so a dependency is captured regardless of which internal path touched the symbol). Before a changed file's old nodes are overwritten, its previously stored declared symbols (each class's FQCN, its interfaces, each function's name) are read and unioned with what the fresh extraction now declares; that union is the exact set of symbols this build changed, added or removed. `symbol_deps` is then queried for every other file whose last resolution depended on any of them - those files are re-parsed and re-resolved too, even though their own content and hash never changed, and this is reported as `files_affected` in the build report, separate from `files_changed`. A `--full` build always re-resolves everything and needs none of this. Measured against the application from 4.2: touching a file with 58 dependents (a static-utility class called from throughout the app) took 1.46 seconds incremental, correctly re-resolving all 58 affected files, still comfortably under the 5 second target from 1.2.
+
+Deleted files cascade (their nodes, edges, unresolved rows and `symbol_deps` entries are removed via `ON DELETE CASCADE` when the `files` row is deleted).
+
+`mapin:export` writes `graph.json` (nodes, edges, meta) or DOT or Mermaid for other tools. The JSON is an export, never the source of truth.
+
+---
+
+## 6. Query layer and MCP
+
+One `Query` service backs the CLI and the MCP server. Every response follows the same contract:
+
+```json
+{
+  "found": true,
+  "query": { "tool": "impact", "key": "method:App\\Services\\Billing::charge", "depth": 3 },
+  "result": { "...": "tool specific" },
+  "confidence": 0.8,
+  "graph": { "built_commit": "3b1c2cc4", "head_commit": "3b1c2cc4", "files_changed_since_build": 0, "built_at": "2026-09-06T14:02:11Z" }
+}
+```
+
+Not found:
+
+```json
+{ "found": false, "query": { "...": "..." }, "suggestions": [ { "key": "class:App\\Http\\Controllers\\CartController", "score": 0.92 } ], "graph": { "...": "..." } }
+```
+
+Suggestions are labelled as such and are never returned as the result. A caller who wants fuzzy matching asks for it with `fuzzy: true` on `find`.
+
+### 6.1 Tools (CLI subcommands and MCP tools share names and arguments)
+
+| Tool | Arguments | Returns |
+|---|---|---|
+| `find` | `name`, `type?`, `fuzzy?` | exact node(s) by key, FQCN, short class name, route name or URI, view name, table name |
+| `node` | `key` | node details, edge counts by type, file and line |
+| `callers` | `key`, `depth=1`, `min_confidence=0` | who calls, injects, instantiates or resolves this node |
+| `callees` | `key`, `depth=1` | what this node calls, renders, dispatches |
+| `impact` | `key`, `depth=3`, `types?`, `min_confidence=0` | reverse reachability grouped by node type: methods, classes, routes, views, jobs, commands, docs; each item with path length and min confidence |
+| `path` | `from`, `to`, `max_depth=6` | shortest edge path |
+| `route` | `uri` or `name` | route, handler chain, middleware, views rendered, models touched |
+| `view` | `name` | who renders it, what it includes, components, routes it links to |
+| `model` | `name` | table, relations, migrations, observers, usages |
+| `unresolved` | `file?`, `member?`, `limit` | unresolved references, for improving code or the resolver |
+| `hubs` | `limit`, `types?` | highest degree nodes, facades excluded |
+| `communities` | `resolution?` | community membership summary; requires `mapin:communities` to have run |
+| `docs` | `key` | sections that document the node, and nodes documented by a section |
+| `stats` | | counts, build history, staleness |
+
+The MCP server is exposed through `laravel/mcp` as a local (stdio) server: `php artisan mapin:mcp`. Tools are defined against Mapin's own `ToolSpec` interface and adapted to `laravel/mcp` in `src/Mcp/Adapters/`. Swapping the MCP library must not touch `src/Query` or `src/Mcp/Tools`.
+
+---
+
+## 7. Markdown module
+
+Separate extractor, same graph. Two layers:
+
+**Deterministic (always on):**
+- `doc` node per file, `section` node per heading with anchor.
+- `links_doc` for relative Markdown links.
+- `documents` edges from mentions in the section text: backticked or plain FQCNs and short class names that exist in the index, file paths, route names, table names, view names, URIs matching a route. Match type recorded in meta. Short-name matches with more than one candidate produce an unresolved row, not a guess.
+
+**Semantic (opt-in, `mapin:docs --with-llm`):**
+- Sends section text (never PHP source) to the configured LLM driver to extract concepts and relations between concepts.
+- Driver behind `Mapin\Extract\Markdown\Semantic\LlmClient`; a `NullClient` is the default. Provider drivers live in their own namespace and are configured in `config/mapin.php`. Implementation of any provider driver must follow that provider's current API reference at the time of coding.
+- Results are stored with `source: llm` and a model identifier, and are dropped and regenerated per section when the section hash changes.
+
+---
+
+## 8. Analysis module
+
+Runs on the stored graph, never during extraction.
+
+- **Communities** (`mapin:communities`): Louvain implemented in PHP over the undirected projection of `calls`, `injects`, `instantiates`, `routes_to`, `renders`, `includes`, `relates`, `dispatches`, `listens`. External nodes and facades are excluded, hub nodes above a degree percentile are excluded and re-attached to the community of their strongest neighbour. Deterministic node ordering so two runs on the same graph give the same result. Membership stored in `nodes.meta.community`; a summary (size, top nodes, dominant namespaces) is written to `meta`.
+- **Hubs**: degree and betweenness-lite (bridge count between communities).
+- **Staleness**: `built_commit` versus `git rev-parse HEAD` and `git diff --name-only`, reported in every response.
+
+---
+
+## 9. Commands
+
+```
+php artisan mapin:build        [--full] [--no-boot] [--paths=app,routes,...] [--heuristics] [--json]
+php artisan mapin:query        {tool} [--arg=value ...] [--json]        # any tool from section 6.1
+php artisan mapin:find         {name} [--type=] [--fuzzy]               # convenience aliases for the most used tools
+php artisan mapin:impact       {key} [--depth=3] [--min-confidence=0]
+php artisan mapin:callers      {key} [--depth=1]
+php artisan mapin:route        {uri-or-name}
+php artisan mapin:unresolved   [--file=] [--member=] [--limit=50]
+php artisan mapin:stats
+php artisan mapin:communities  [--resolution=1.0]
+php artisan mapin:docs         [--with-llm]
+php artisan mapin:export       [--format=json|dot|mermaid] [--out=]
+php artisan mapin:mcp                                                   # stdio MCP server
+php artisan mapin:doctor                                                # dependencies, boot, staleness, unresolved ratio
+php artisan mapin:clear
+```
+
+Every command supports `--json` for machine consumption. Exit code 1 on build errors, 2 on staleness warnings when `--strict` is passed (for CI).
+
+Recommended git hook for host projects (documented, not installed automatically): `post-commit` running `mapin:build --json > /dev/null`.
+
+---
+
+## 10. Project structure
+
+```
+mapin/
+├── composer.json                 # nexvia-solutions/mapin, PHP ^8.2, illuminate/* ^11.45|^12|^13, nikic/php-parser ^5.0, laravel/mcp
+├── LICENSE                       # MIT
+├── README.md  README.es.md  CHANGELOG.md  CONTRIBUTING.md  SPEC.md
+├── config/mapin.php              # paths, exclude, storage path, boot, heuristics, categories, llm driver, communities
+├── src/
+│   ├── MapinServiceProvider.php
+│   ├── Console/Commands/         # one class per command in section 9
+│   ├── Graph/                    # Node, Edge, NodeType (enum), EdgeType (enum), Resolution (enum), Confidence, Key
+│   ├── Store/                    # SqliteStore, Schema, SchemaMigrator, BuildReport
+│   ├── Extract/
+│   │   ├── Contracts/            # Extractor, Fragment, ExtractionContext, SourceFile
+│   │   ├── Discovery/            # FileDiscovery (gitignore aware), Hasher
+│   │   ├── SymbolIndex.php
+│   │   ├── Php/                  # PhpExtractor, Visitors/DeclarationVisitor, Visitors/ReferenceVisitor, Scope, TypeResolver, LaravelHints
+│   │   ├── Blade/                # BladeExtractor (compiler based), DirectiveScanner (no-boot fallback)
+│   │   ├── Routes/               # RouteExtractor
+│   │   ├── Container/            # BindingExtractor
+│   │   ├── Schedule/             # ScheduleExtractor
+│   │   ├── Markdown/             # MarkdownExtractor, Mentions, Semantic/{LlmClient, NullClient, ConceptExtractor}
+│   │   └── Js/                   # JsExtractor (phase 7)
+│   ├── Resolve/                  # Resolver (second pass), Candidates
+│   ├── Query/                    # Query, Finder, Traversal, Impact, Response
+│   ├── Analysis/                 # Louvain, Hubs, Staleness
+│   ├── Mcp/                      # Contracts/ToolSpec, Tools/*, Adapters/LaravelMcpAdapter
+│   └── Support/
+├── tests/
+│   ├── Unit/                     # resolver rules, keys, Louvain, mentions
+│   ├── Feature/                  # build, incremental, query contract, MCP tools, commands
+│   ├── Fixtures/app/             # invented Laravel app (Orchestra Testbench) covering every pattern in 3.2 and 3.3
+│   └── Golden/                   # expected nodes and edges for the fixture app
+├── docs/                         # ARCHITECTURE.md, GRAPH_MODEL.md, MCP.md, BENCHMARKS.md, EXTENDING.md
+└── .github/workflows/ci.yml
+```
+
+---
+
+## 11. Code style
+
+- PHP 8.2+, `declare(strict_types=1)` in every file, PSR-12 enforced with Laravel Pint (`laravel` preset).
+- Classes `final` by default; value objects `readonly`; enums for node types, edge types and resolution kinds. No static mutable state.
+- PHPStan level 8 from day one (baseline file allowed only for third-party typing gaps).
+- One class per responsibility; extractors, visitors and tools stay under about 300 lines. Long switch statements over node types go into small strategy classes.
+- No hardcoded directories, framework paths or class names beyond the Laravel base classes listed in 3.4. Everything else is discovered through the container, the router or configuration.
+- Identifiers, comments, commit messages and docs in English. Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`).
+- No em dash or en dash characters in any generated text (code comments, docs, commit messages, CLI output).
+- Errors are values where possible: extraction failures become warnings in the build report, never uncaught exceptions that abort the whole build. A syntax error in one file skips that file and records it.
+
+---
+
+## 12. Testing strategy
+
+- **Framework:** Pest on Orchestra Testbench. CI matrix: PHP 8.2, 8.3, 8.4 by Laravel 11, 12, 13. Pint `--test`, PHPStan and Pest must pass on every push.
+- **Fixture app:** an invented domain (for example a library or a bike shop) with at least one instance of every pattern in 3.2 and 3.3: constructor injection typed and untyped, method injection, interface bound in a provider, interface with a single implementation and no binding, `new`, static factory, Eloquent chains, scopes, relations of every kind, `$table` override and convention, migrations with anonymous classes, routes with names, groups, resources and invokable controllers, middleware aliases, Blade layouts, includes, `@each`, class and anonymous components, `route()` inside Blade and PHP, jobs, events, listeners via `$listen` and via `Event::listen`, observers, scheduled commands, Markdown docs with backticked and plain mentions, links and ambiguous short names. Nothing in the fixture refers to any real product, company or tenant.
+- **Golden tests:** `tests/Golden/expected.json` lists every node key and every edge (type, from, to, resolution) the fixture must produce. The build output is diffed against it. Any change to the golden file is reviewed in the PR.
+- **Resolver unit tests:** table driven: a PHP snippet, the expected target and resolution kind. One row per rule in 4.1, plus negative rows that must produce `unresolved`.
+- **Contract tests:** every tool returns the envelope in section 6; not-found returns `found: false` with suggestions; `fuzzy: false` never returns a non-exact node; every response includes `graph` staleness.
+- **Incremental tests:** touch one fixture file, assert only that file is re-extracted; delete a file, assert its nodes and edges are gone; make the graph shrink, assert the build succeeds with a warning.
+- **MCP tests:** tool list and schemas match `ToolSpec`; a request through the adapter returns the same payload as the CLI.
+- **Benchmark (manual, not CI):** `bin/benchmark` runs a full and an incremental build on any real app and prints aggregate numbers (files, nodes, edges, resolution ratio per kind, duration). Results are copied into `docs/BENCHMARKS.md` as numbers only.
+- **Coverage targets:** `Extract/Php` and `Resolve` at 90% or higher, overall 80% or higher.
+
+---
+
+## 13. Boundaries
+
+### Always
+
+- Return `found: false` explicitly. Suggestions are labelled and never substituted for the result.
+- Attach `resolution` and `confidence` to every resolved edge and report the minimum confidence on every traversal.
+- Run fully local by default. No network calls unless `--with-llm` is passed.
+- Build incrementally by content hash. Store the result even when the graph shrinks, and report the shrink.
+- Report staleness (`built_commit`, files changed since build) in every response.
+- Keep extractors behind the `Extractor` interface so host apps and plugins can add their own.
+- Derive categories and paths from the container, router and config. Never assume `app/Models` or any other directory layout.
+- Skip and report a file that fails to parse; never abort the build for one file.
+- Pass Pint, PHPStan and Pest before every commit. Use Conventional Commits.
+- Keep fixtures, docs and examples invented and generic.
+
+### Ask first
+
+- Adding any runtime dependency to `composer.json`.
+- Changing the SQLite schema (requires a schema version bump and a documented full rebuild).
+- Adding an extractor that requires booting the host application in a new way.
+- Renaming or changing the arguments of a query tool after the first tagged release.
+- Tagging a release, publishing to Packagist, or changing CI secrets.
+- Enabling any heuristic resolution by default.
+
+### Never
+
+1. **Never send code to an LLM without an explicit flag.** Extraction is local. Only the optional semantic Markdown layer calls a provider, only with `--with-llm`, and only with Markdown section text, never PHP source. Reason: the package runs inside third-party proprietary codebases; a silent upload is a security incident and destroys trust.
+2. **Never write outside the configured storage directory** (default `storage/mapin/`). No files in the project root, no edits to `.gitignore`. Reason: a tool that pollutes the host working tree produces stale duplicate graphs and untracked noise, which is exactly what went wrong with the previous tool.
+3. **Never execute the host application's business logic.** Booting the kernel to read the router and the container is allowed. Dispatching requests, running jobs, running commands, or executing a single Eloquent query against the host database is not. `--no-boot` disables booting entirely. Reason: the tool may run against production-like databases.
+4. **Never include data from any real project or tenant in the repository.** Fixtures are invented. Benchmarks are published as aggregate numbers. Reason: public repository; internal names and URLs are a leak and make the tool look bespoke.
+5. **Never answer with an approximate match without saying so.** Reason: the previous tool returned look-alike nodes with full confidence and callers acted on them.
+6. **Never leave a stale graph silently.** Every build writes a report, a shrinking graph is a warning not a refusal, and every response carries the build commit. Reason: silent refusals to overwrite left graphs several commits behind without anyone noticing.
+
+---
+
+## 14. Phases and acceptance gates
+
+| Phase | Deliverable | Gate to pass before the next phase |
+|---|---|---|
+| 0. Spike (done, see 4.2) | Standalone script using php-parser over a real `app/` directory, emitting `injects`, `instantiates`, `calls` with resolution kinds and an unresolved list. Run inside the host app container. | Met: 100% of project-receiver calls resolved at confidence 0.7+, 18.1% at 0.8+; 84.1% of all member calls resolved at any confidence, 51.5% at 0.8+ (up from a 49.7%/26.9% baseline, a 68% cut in unresolved calls). All three known failure cases from the previous tool resolved at confidence 1.0. Rules 7 to 12 in section 4.1 are carried forward into the real `PhpExtractor`/`Resolver` as requirements, not left behind in the spike script. |
+| 1. Core (built, see 1.4) | Package skeleton, service provider, config, `FileDiscovery`, `PhpExtractor`, `SymbolIndex` (with dependency tracking), `Resolver`, `SqliteStore` (with `symbol_deps`), `BuildRunner` (with affected-file detection), `mapin:build` full and incremental, build report, `mapin:stats`, `mapin:find`, `mapin:callers`, `bin/benchmark.php`. Fixture app and unit/feature tests covering every rule in 4.1, plus a dedicated cross-file invalidation test. | Met against the real application from 4.2: full build of 3,596 files (project plus indexed vendor) in 33 to 43s; incremental with no changes in 0.14 to 0.87s; incremental touching a file with 58 dependents in 1.46s, correctly re-resolving all 58. All 14 tests green (one written to fail without the fix, confirmed to actually fail with it disabled), Pint and PHPStan level 6 clean. Cross-file incremental invalidation, the gap this phase originally shipped with, is closed - see 1.4. CI workflow written, not yet run on real GitHub infrastructure. |
+| 2. Laravel (built, see 1.5) | `RouteExtractor`, `BindingExtractor`, `BladeExtractor` (regex based, not compiler based - see 1.5), relations, tables, migrations, dispatch, listeners, observers, schedule. `mapin:route`, `mapin:view`, `mapin:model`, `mapin:impact`. | Met: `impact` lists routes/views/jobs/commands/methods/classes in one call via a one-hop heuristic; 1,589 of 1,589 routes present against a real, booted application's router, exactly - not approximately (27 tests green, Pint and PHPStan clean; see 1.5). Golden-test apparatus built in the 1.8 hardening pass, after this phase closed - see 1.8, not still open as this row originally said. |
+| 3. MCP (built, see 1.7 and 1.9) | `ToolSpec`, tools for every query, `laravel/mcp` adapter, `mapin:mcp`, `mapin:doctor`, `docs/MCP.md` with Claude Code and Cursor setup. | Met: not-found contract verified from a real `tools/call` round-trip against both the fixture (1.7) and a real application's graph (1.9); `mapin` is a real, working entry in that application's own `.mcp.json`, checked by running the exact configured command line with a real request, not just declared (see 1.9). Installed against a Laravel 13 upgrade branch, not that application's main working branch (still Laravel 10) - see 1.9's closing note. |
+| 4. Markdown | Deterministic `MarkdownExtractor`, `documents` and `links_doc`, `mapin:docs`, `docs` tool. | Every section mentioning a known class or route is linked; ambiguous short names land in `unresolved`. |
+| 5. Analysis | Louvain in PHP, hubs, `mapin:communities`, `communities` and `hubs` tools, deterministic output. | Same graph, same result across runs; communities align with known modules of the benchmark app in a manual review. |
+| 6. Semantic docs | `LlmClient` contract, `NullClient`, one provider driver, `--with-llm`, per-section caching by hash. | Concepts regenerate only for changed sections; zero network calls without the flag (asserted by test). |
+| 7. JS | `JsExtractor` matching literal URLs in `fetch`/`axios` calls to route URIs; `requests` edges included in `impact`. | Routes called from JS appear in `impact` for their handlers. |
+| 8. Release | README, README.es.md, CONTRIBUTING, CHANGELOG, `docs/EXTENDING.md`, GitHub repo public, Packagist, v0.1.0 tag. | Fresh install on a clean Laravel 11 and 13 app works from the README alone. |
+
+---
+
+## 15. Risks and mitigations
+
+| Risk | Mitigation |
+|---|---|
+| `laravel/mcp` is in beta and its API may change | Tools are defined against `ToolSpec`; only the adapter depends on the library. `php-mcp/laravel` is the documented fallback. |
+| False positives in type resolution (interfaces, chains) | Confidence on every edge; heuristics off by default; `unresolved` is a first-class output, not a silent drop. |
+| Blade compilation requires the app's view compiler | `--no-boot` falls back to a directive scanner with lower confidence; documented. |
+| Performance on large apps | Single pass per file, fragments cached by hash, resolve pass in memory, SQLite in one transaction. Benchmark script from phase 1. |
+| Scope creep toward a full static analyser | Non-goals in 1.3 are explicit. Anything requiring data flow across methods is out. |
+| Maintenance burden after publishing | Small core, plugin interface for framework add-ons, golden tests that make regressions visible, CI matrix. |
+
+---
+
+## 16. Open questions
+
+- Default depth for `impact` (3 proposed) and whether facades should be included on request.
+- Whether `mapin:build` should install the recommended git hook on demand (`--install-hook`) or stay documentation only.
+- Storage of an optional JSON export on every build for tools that cannot read SQLite (proposed: no, export on demand).
+- Community detection resolution default (1.0 proposed) and the hub exclusion percentile (top 1% proposed).

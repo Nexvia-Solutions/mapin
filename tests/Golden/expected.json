@@ -1,0 +1,691 @@
+{
+    "nodes": [
+        "class:Fixture\\Contracts\\PricingEngine",
+        "class:Fixture\\Events\\BookPublished",
+        "class:Fixture\\Http\\Controllers\\BookController",
+        "class:Fixture\\Http\\Controllers\\CatalogController",
+        "class:Fixture\\Http\\Controllers\\DashboardController",
+        "class:Fixture\\Http\\Controllers\\ReportController",
+        "class:Fixture\\Http\\Middleware\\EnsureTenant",
+        "class:Fixture\\Jobs\\NotifyNewBook",
+        "class:Fixture\\Listeners\\NotifySubscribers",
+        "class:Fixture\\Models\\Author",
+        "class:Fixture\\Models\\Book",
+        "class:Fixture\\Observers\\AuthorObserver",
+        "class:Fixture\\Providers\\BookEventServiceProvider",
+        "class:Fixture\\Providers\\BookScheduleProvider",
+        "class:Fixture\\Services\\Catalog",
+        "class:Fixture\\Services\\CatalogNotifier",
+        "class:Fixture\\Services\\InventoryLedger",
+        "class:Fixture\\Services\\ShippingCalculator",
+        "class:Fixture\\Services\\StandardPricingEngine",
+        "class:Fixture\\Services\\TenantContext",
+        "component:alert",
+        "component:components.card",
+        "external:Illuminate\\Console\\Scheduling\\Schedule",
+        "external:Illuminate\\Support\\Facades\\Event",
+        "external:Illuminate\\Support\\Facades\\Facade",
+        "external:Illuminate\\Support\\ServiceProvider",
+        "external:Illuminate\\Support\\Str",
+        "external:RuntimeException",
+        "file:app/MapinFixture/Contracts/PricingEngine.php",
+        "file:app/MapinFixture/Events/BookPublished.php",
+        "file:app/MapinFixture/Http/Controllers/BookController.php",
+        "file:app/MapinFixture/Http/Controllers/CatalogController.php",
+        "file:app/MapinFixture/Http/Controllers/DashboardController.php",
+        "file:app/MapinFixture/Http/Controllers/ReportController.php",
+        "file:app/MapinFixture/Http/Middleware/EnsureTenant.php",
+        "file:app/MapinFixture/Jobs/NotifyNewBook.php",
+        "file:app/MapinFixture/Listeners/NotifySubscribers.php",
+        "file:app/MapinFixture/Models/Author.php",
+        "file:app/MapinFixture/Models/Book.php",
+        "file:app/MapinFixture/Observers/AuthorObserver.php",
+        "file:app/MapinFixture/Providers/BookEventServiceProvider.php",
+        "file:app/MapinFixture/Providers/BookScheduleProvider.php",
+        "file:app/MapinFixture/Services/Catalog.php",
+        "file:app/MapinFixture/Services/CatalogNotifier.php",
+        "file:app/MapinFixture/Services/InventoryLedger.php",
+        "file:app/MapinFixture/Services/ShippingCalculator.php",
+        "file:app/MapinFixture/Services/StandardPricingEngine.php",
+        "file:app/MapinFixture/Services/TenantContext.php",
+        "file:app/MapinFixture/helpers.php",
+        "file:config/app.php",
+        "file:config/auth.php",
+        "file:config/broadcasting.php",
+        "file:config/cache.php",
+        "file:config/concurrency.php",
+        "file:config/cors.php",
+        "file:config/database.php",
+        "file:config/filesystems.php",
+        "file:config/hashing.php",
+        "file:config/logging.php",
+        "file:config/mail.php",
+        "file:config/queue.php",
+        "file:config/services.php",
+        "file:config/session.php",
+        "file:config/view.php",
+        "function:shipping_calculator",
+        "method:Fixture\\Contracts\\PricingEngine::quote",
+        "method:Fixture\\Events\\BookPublished::__construct",
+        "method:Fixture\\Http\\Controllers\\BookController::__construct",
+        "method:Fixture\\Http\\Controllers\\BookController::authorBooks",
+        "method:Fixture\\Http\\Controllers\\BookController::quickEstimate",
+        "method:Fixture\\Http\\Controllers\\BookController::safeStore",
+        "method:Fixture\\Http\\Controllers\\BookController::store",
+        "method:Fixture\\Http\\Controllers\\CatalogController::__construct",
+        "method:Fixture\\Http\\Controllers\\CatalogController::show",
+        "method:Fixture\\Http\\Controllers\\DashboardController::bookIndexLink",
+        "method:Fixture\\Http\\Controllers\\DashboardController::index",
+        "method:Fixture\\Http\\Controllers\\ReportController::__invoke",
+        "method:Fixture\\Http\\Middleware\\EnsureTenant::handle",
+        "method:Fixture\\Jobs\\NotifyNewBook::__construct",
+        "method:Fixture\\Jobs\\NotifyNewBook::handle",
+        "method:Fixture\\Listeners\\NotifySubscribers::handle",
+        "method:Fixture\\Models\\Author::books",
+        "method:Fixture\\Models\\Book::author",
+        "method:Fixture\\Observers\\AuthorObserver::created",
+        "method:Fixture\\Providers\\BookScheduleProvider::schedule",
+        "method:Fixture\\Services\\Catalog::findBook",
+        "method:Fixture\\Services\\CatalogNotifier::notifyNewBook",
+        "method:Fixture\\Services\\InventoryLedger::recordSale",
+        "method:Fixture\\Services\\ShippingCalculator::estimate",
+        "method:Fixture\\Services\\StandardPricingEngine::quote",
+        "method:Fixture\\Services\\TenantContext::id",
+        "method:Fixture\\Services\\TenantContext::setCurrent",
+        "middleware:ensure-tenant",
+        "route:GET /dashboard",
+        "route:GET /reports",
+        "route:GET /storage/{path}",
+        "route:POST /books",
+        "route:PUT /storage/{path}",
+        "table:authors",
+        "table:library_books",
+        "view:dashboard.index",
+        "view:dashboard.partials.stats",
+        "view:layouts.app"
+    ],
+    "edges": [
+        {
+            "type": "binds",
+            "from": "class:Fixture\\Contracts\\PricingEngine",
+            "to": "class:Fixture\\Services\\StandardPricingEngine",
+            "resolution": null
+        },
+        {
+            "type": "calls",
+            "from": "file:config/app.php",
+            "to": "external:Illuminate\\Support\\Facades\\Facade",
+            "resolution": "static"
+        },
+        {
+            "type": "calls",
+            "from": "file:config/app.php",
+            "to": "external:Illuminate\\Support\\ServiceProvider",
+            "resolution": "static"
+        },
+        {
+            "type": "calls",
+            "from": "file:config/cache.php",
+            "to": "external:Illuminate\\Support\\Str",
+            "resolution": "static"
+        },
+        {
+            "type": "calls",
+            "from": "file:config/database.php",
+            "to": "external:Illuminate\\Support\\Str",
+            "resolution": "static"
+        },
+        {
+            "type": "calls",
+            "from": "file:config/session.php",
+            "to": "external:Illuminate\\Support\\Str",
+            "resolution": "static"
+        },
+        {
+            "type": "calls",
+            "from": "method:Fixture\\Http\\Controllers\\BookController::authorBooks",
+            "to": "class:Fixture\\Models\\Book",
+            "resolution": "eloquent"
+        },
+        {
+            "type": "calls",
+            "from": "method:Fixture\\Http\\Controllers\\BookController::authorBooks",
+            "to": "method:Fixture\\Models\\Author::books",
+            "resolution": "param"
+        },
+        {
+            "type": "calls",
+            "from": "method:Fixture\\Http\\Controllers\\BookController::quickEstimate",
+            "to": "method:Fixture\\Services\\ShippingCalculator::estimate",
+            "resolution": "return_type"
+        },
+        {
+            "type": "calls",
+            "from": "method:Fixture\\Http\\Controllers\\BookController::safeStore",
+            "to": "external:RuntimeException",
+            "resolution": "catch"
+        },
+        {
+            "type": "calls",
+            "from": "method:Fixture\\Http\\Controllers\\BookController::safeStore",
+            "to": "method:Fixture\\Http\\Controllers\\BookController::store",
+            "resolution": "this"
+        },
+        {
+            "type": "calls",
+            "from": "method:Fixture\\Http\\Controllers\\BookController::store",
+            "to": "method:Fixture\\Services\\CatalogNotifier::notifyNewBook",
+            "resolution": "typed_property"
+        },
+        {
+            "type": "calls",
+            "from": "method:Fixture\\Http\\Controllers\\BookController::store",
+            "to": "method:Fixture\\Services\\InventoryLedger::recordSale",
+            "resolution": "container"
+        },
+        {
+            "type": "calls",
+            "from": "method:Fixture\\Http\\Controllers\\BookController::store",
+            "to": "method:Fixture\\Services\\ShippingCalculator::estimate",
+            "resolution": "local_assign"
+        },
+        {
+            "type": "calls",
+            "from": "method:Fixture\\Http\\Controllers\\BookController::store",
+            "to": "method:Fixture\\Services\\StandardPricingEngine::quote",
+            "resolution": "container"
+        },
+        {
+            "type": "calls",
+            "from": "method:Fixture\\Http\\Controllers\\BookController::store",
+            "to": "method:Fixture\\Services\\TenantContext::id",
+            "resolution": "static"
+        },
+        {
+            "type": "calls",
+            "from": "method:Fixture\\Http\\Controllers\\BookController::store",
+            "to": "method:Fixture\\Services\\TenantContext::setCurrent",
+            "resolution": "static"
+        },
+        {
+            "type": "calls",
+            "from": "method:Fixture\\Http\\Controllers\\CatalogController::show",
+            "to": "method:Fixture\\Services\\Catalog::findBook",
+            "resolution": "typed_property"
+        },
+        {
+            "type": "calls",
+            "from": "method:Fixture\\Http\\Controllers\\DashboardController::index",
+            "to": "class:Fixture\\Jobs\\NotifyNewBook",
+            "resolution": "static"
+        },
+        {
+            "type": "calls",
+            "from": "method:Fixture\\Http\\Controllers\\DashboardController::index",
+            "to": "class:Fixture\\Models\\Author",
+            "resolution": "static"
+        },
+        {
+            "type": "calls",
+            "from": "method:Fixture\\Http\\Controllers\\DashboardController::index",
+            "to": "external:Illuminate\\Support\\Facades\\Event",
+            "resolution": "static"
+        },
+        {
+            "type": "calls",
+            "from": "method:Fixture\\Http\\Controllers\\ReportController::__invoke",
+            "to": "method:Fixture\\Services\\TenantContext::id",
+            "resolution": "static"
+        },
+        {
+            "type": "calls",
+            "from": "method:Fixture\\Models\\Author::books",
+            "to": "class:Fixture\\Models\\Author",
+            "resolution": "this"
+        },
+        {
+            "type": "calls",
+            "from": "method:Fixture\\Models\\Book::author",
+            "to": "class:Fixture\\Models\\Book",
+            "resolution": "this"
+        },
+        {
+            "type": "calls",
+            "from": "method:Fixture\\Providers\\BookScheduleProvider::schedule",
+            "to": "external:Illuminate\\Console\\Scheduling\\Schedule",
+            "resolution": "param"
+        },
+        {
+            "type": "declares",
+            "from": "class:Fixture\\Contracts\\PricingEngine",
+            "to": "method:Fixture\\Contracts\\PricingEngine::quote",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "class:Fixture\\Events\\BookPublished",
+            "to": "method:Fixture\\Events\\BookPublished::__construct",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "class:Fixture\\Http\\Controllers\\BookController",
+            "to": "method:Fixture\\Http\\Controllers\\BookController::__construct",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "class:Fixture\\Http\\Controllers\\BookController",
+            "to": "method:Fixture\\Http\\Controllers\\BookController::authorBooks",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "class:Fixture\\Http\\Controllers\\BookController",
+            "to": "method:Fixture\\Http\\Controllers\\BookController::quickEstimate",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "class:Fixture\\Http\\Controllers\\BookController",
+            "to": "method:Fixture\\Http\\Controllers\\BookController::safeStore",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "class:Fixture\\Http\\Controllers\\BookController",
+            "to": "method:Fixture\\Http\\Controllers\\BookController::store",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "class:Fixture\\Http\\Controllers\\CatalogController",
+            "to": "method:Fixture\\Http\\Controllers\\CatalogController::__construct",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "class:Fixture\\Http\\Controllers\\CatalogController",
+            "to": "method:Fixture\\Http\\Controllers\\CatalogController::show",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "class:Fixture\\Http\\Controllers\\DashboardController",
+            "to": "method:Fixture\\Http\\Controllers\\DashboardController::bookIndexLink",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "class:Fixture\\Http\\Controllers\\DashboardController",
+            "to": "method:Fixture\\Http\\Controllers\\DashboardController::index",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "class:Fixture\\Http\\Controllers\\ReportController",
+            "to": "method:Fixture\\Http\\Controllers\\ReportController::__invoke",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "class:Fixture\\Http\\Middleware\\EnsureTenant",
+            "to": "method:Fixture\\Http\\Middleware\\EnsureTenant::handle",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "class:Fixture\\Jobs\\NotifyNewBook",
+            "to": "method:Fixture\\Jobs\\NotifyNewBook::__construct",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "class:Fixture\\Jobs\\NotifyNewBook",
+            "to": "method:Fixture\\Jobs\\NotifyNewBook::handle",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "class:Fixture\\Listeners\\NotifySubscribers",
+            "to": "method:Fixture\\Listeners\\NotifySubscribers::handle",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "class:Fixture\\Models\\Author",
+            "to": "method:Fixture\\Models\\Author::books",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "class:Fixture\\Models\\Book",
+            "to": "method:Fixture\\Models\\Book::author",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "class:Fixture\\Observers\\AuthorObserver",
+            "to": "method:Fixture\\Observers\\AuthorObserver::created",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "class:Fixture\\Providers\\BookScheduleProvider",
+            "to": "method:Fixture\\Providers\\BookScheduleProvider::schedule",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "class:Fixture\\Services\\Catalog",
+            "to": "method:Fixture\\Services\\Catalog::findBook",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "class:Fixture\\Services\\CatalogNotifier",
+            "to": "method:Fixture\\Services\\CatalogNotifier::notifyNewBook",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "class:Fixture\\Services\\InventoryLedger",
+            "to": "method:Fixture\\Services\\InventoryLedger::recordSale",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "class:Fixture\\Services\\ShippingCalculator",
+            "to": "method:Fixture\\Services\\ShippingCalculator::estimate",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "class:Fixture\\Services\\StandardPricingEngine",
+            "to": "method:Fixture\\Services\\StandardPricingEngine::quote",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "class:Fixture\\Services\\TenantContext",
+            "to": "method:Fixture\\Services\\TenantContext::id",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "class:Fixture\\Services\\TenantContext",
+            "to": "method:Fixture\\Services\\TenantContext::setCurrent",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "file:app/MapinFixture/Contracts/PricingEngine.php",
+            "to": "class:Fixture\\Contracts\\PricingEngine",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "file:app/MapinFixture/Events/BookPublished.php",
+            "to": "class:Fixture\\Events\\BookPublished",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "file:app/MapinFixture/Http/Controllers/BookController.php",
+            "to": "class:Fixture\\Http\\Controllers\\BookController",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "file:app/MapinFixture/Http/Controllers/CatalogController.php",
+            "to": "class:Fixture\\Http\\Controllers\\CatalogController",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "file:app/MapinFixture/Http/Controllers/DashboardController.php",
+            "to": "class:Fixture\\Http\\Controllers\\DashboardController",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "file:app/MapinFixture/Http/Controllers/ReportController.php",
+            "to": "class:Fixture\\Http\\Controllers\\ReportController",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "file:app/MapinFixture/Http/Middleware/EnsureTenant.php",
+            "to": "class:Fixture\\Http\\Middleware\\EnsureTenant",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "file:app/MapinFixture/Jobs/NotifyNewBook.php",
+            "to": "class:Fixture\\Jobs\\NotifyNewBook",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "file:app/MapinFixture/Listeners/NotifySubscribers.php",
+            "to": "class:Fixture\\Listeners\\NotifySubscribers",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "file:app/MapinFixture/Models/Author.php",
+            "to": "class:Fixture\\Models\\Author",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "file:app/MapinFixture/Models/Book.php",
+            "to": "class:Fixture\\Models\\Book",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "file:app/MapinFixture/Observers/AuthorObserver.php",
+            "to": "class:Fixture\\Observers\\AuthorObserver",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "file:app/MapinFixture/Providers/BookEventServiceProvider.php",
+            "to": "class:Fixture\\Providers\\BookEventServiceProvider",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "file:app/MapinFixture/Providers/BookScheduleProvider.php",
+            "to": "class:Fixture\\Providers\\BookScheduleProvider",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "file:app/MapinFixture/Services/Catalog.php",
+            "to": "class:Fixture\\Services\\Catalog",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "file:app/MapinFixture/Services/CatalogNotifier.php",
+            "to": "class:Fixture\\Services\\CatalogNotifier",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "file:app/MapinFixture/Services/InventoryLedger.php",
+            "to": "class:Fixture\\Services\\InventoryLedger",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "file:app/MapinFixture/Services/ShippingCalculator.php",
+            "to": "class:Fixture\\Services\\ShippingCalculator",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "file:app/MapinFixture/Services/StandardPricingEngine.php",
+            "to": "class:Fixture\\Services\\StandardPricingEngine",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "file:app/MapinFixture/Services/TenantContext.php",
+            "to": "class:Fixture\\Services\\TenantContext",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "file:app/MapinFixture/helpers.php",
+            "to": "function:shipping_calculator",
+            "resolution": null
+        },
+        {
+            "type": "dispatches",
+            "from": "method:Fixture\\Http\\Controllers\\DashboardController::index",
+            "to": "class:Fixture\\Jobs\\NotifyNewBook",
+            "resolution": null
+        },
+        {
+            "type": "implements",
+            "from": "class:Fixture\\Services\\StandardPricingEngine",
+            "to": "class:Fixture\\Contracts\\PricingEngine",
+            "resolution": null
+        },
+        {
+            "type": "includes",
+            "from": "view:dashboard.index",
+            "to": "view:dashboard.partials.stats",
+            "resolution": null
+        },
+        {
+            "type": "includes",
+            "from": "view:dashboard.index",
+            "to": "view:layouts.app",
+            "resolution": null
+        },
+        {
+            "type": "instantiates",
+            "from": "file:app/MapinFixture/helpers.php",
+            "to": "class:Fixture\\Services\\ShippingCalculator",
+            "resolution": "new"
+        },
+        {
+            "type": "instantiates",
+            "from": "method:Fixture\\Http\\Controllers\\BookController::store",
+            "to": "class:Fixture\\Services\\ShippingCalculator",
+            "resolution": "new"
+        },
+        {
+            "type": "instantiates",
+            "from": "method:Fixture\\Providers\\BookScheduleProvider::schedule",
+            "to": "class:Fixture\\Jobs\\NotifyNewBook",
+            "resolution": "new"
+        },
+        {
+            "type": "links_route",
+            "from": "method:Fixture\\Http\\Controllers\\DashboardController::bookIndexLink",
+            "to": "route:GET /dashboard",
+            "resolution": null
+        },
+        {
+            "type": "listens",
+            "from": "class:Fixture\\Listeners\\NotifySubscribers",
+            "to": "class:Fixture\\Events\\BookPublished",
+            "resolution": null
+        },
+        {
+            "type": "listens",
+            "from": "class:Fixture\\Listeners\\NotifySubscribers",
+            "to": "class:Fixture\\Events\\BookPublished",
+            "resolution": null
+        },
+        {
+            "type": "maps_table",
+            "from": "class:Fixture\\Models\\Author",
+            "to": "table:authors",
+            "resolution": null
+        },
+        {
+            "type": "maps_table",
+            "from": "class:Fixture\\Models\\Book",
+            "to": "table:library_books",
+            "resolution": null
+        },
+        {
+            "type": "observes",
+            "from": "class:Fixture\\Observers\\AuthorObserver",
+            "to": "class:Fixture\\Models\\Author",
+            "resolution": null
+        },
+        {
+            "type": "relates",
+            "from": "class:Fixture\\Models\\Author",
+            "to": "class:Fixture\\Models\\Book",
+            "resolution": null
+        },
+        {
+            "type": "relates",
+            "from": "class:Fixture\\Models\\Book",
+            "to": "class:Fixture\\Models\\Author",
+            "resolution": null
+        },
+        {
+            "type": "renders",
+            "from": "method:Fixture\\Http\\Controllers\\DashboardController::index",
+            "to": "view:dashboard.index",
+            "resolution": null
+        },
+        {
+            "type": "resolves",
+            "from": "method:Fixture\\Http\\Controllers\\BookController::store",
+            "to": "class:Fixture\\Services\\InventoryLedger",
+            "resolution": "container"
+        },
+        {
+            "type": "routes_to",
+            "from": "route:GET /dashboard",
+            "to": "method:Fixture\\Http\\Controllers\\DashboardController::index",
+            "resolution": null
+        },
+        {
+            "type": "routes_to",
+            "from": "route:GET /reports",
+            "to": "method:Fixture\\Http\\Controllers\\ReportController::__invoke",
+            "resolution": null
+        },
+        {
+            "type": "routes_to",
+            "from": "route:POST /books",
+            "to": "method:Fixture\\Http\\Controllers\\BookController::store",
+            "resolution": null
+        },
+        {
+            "type": "schedules",
+            "from": "method:Fixture\\Providers\\BookScheduleProvider::schedule",
+            "to": "class:Fixture\\Jobs\\NotifyNewBook",
+            "resolution": null
+        },
+        {
+            "type": "uses_component",
+            "from": "view:dashboard.index",
+            "to": "component:alert",
+            "resolution": null
+        },
+        {
+            "type": "uses_component",
+            "from": "view:dashboard.index",
+            "to": "component:components.card",
+            "resolution": null
+        },
+        {
+            "type": "uses_middleware",
+            "from": "route:GET /reports",
+            "to": "middleware:ensure-tenant",
+            "resolution": null
+        }
+    ]
+}

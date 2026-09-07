@@ -1,0 +1,63 @@
+{
+    "name": "nexvia-solutions/mapin",
+    "description": "A queryable code graph for Laravel applications: dependency injection, container bindings, routes, views, Eloquent relations and documentation, connected the way generic AST tools cannot see.",
+    "license": "MIT",
+    "type": "library",
+    "keywords": ["laravel", "static-analysis", "code-graph", "mcp", "dependency-graph"],
+    "authors": [
+        {
+            "name": "Brandon Vergara"
+        }
+    ],
+    "require": {
+        "php": "^8.2",
+        "ext-pdo": "*",
+        "ext-sqlite3": "*",
+        "illuminate/console": "^11.45|^12.0|^13.0",
+        "illuminate/container": "^11.45|^12.0|^13.0",
+        "illuminate/contracts": "^11.45|^12.0|^13.0",
+        "illuminate/routing": "^11.45|^12.0|^13.0",
+        "illuminate/support": "^11.45|^12.0|^13.0",
+        "laravel/mcp": "^1.0.0-beta.1",
+        "nikic/php-parser": "^5.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^9.0|^10.0",
+        "pestphp/pest": "^2.34|^3.0",
+        "pestphp/pest-plugin-laravel": "^2.4|^3.0",
+        "laravel/pint": "^1.17",
+        "phpstan/phpstan": "^1.11"
+    },
+    "autoload": {
+        "psr-4": {
+            "Mapin\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Mapin\\Tests\\": "tests/",
+            "Fixture\\": "tests/Fixtures/app/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Mapin\\MapinServiceProvider"
+            ]
+        }
+    },
+    "scripts": {
+        "test": "pest",
+        "test-coverage": "pest --coverage",
+        "format": "pint",
+        "analyse": "phpstan analyse"
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

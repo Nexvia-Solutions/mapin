@@ -1,0 +1,129 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Mapin\Store;
+
+/**
+ * The SQLite schema from SPEC.md section 5. A schema version change here must bump
+ * CURRENT_VERSION so a stale database triggers a full rebuild instead of silently reading data in
+ * a shape the current code no longer expects.
+ */
+final class Schema
+{
+    public const CURRENT_VERSION = 2;
+
+    public const STATEMENTS = [
+        'CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)',
+        'CREATE TABLE IF NOT EXISTS files (
+            id INTEGER PRIMARY KEY,
+            path TEXT UNIQUE NOT NULL,
+            lang TEXT NOT NULL,
+            is_project INTEGER NOT NULL DEFAULT 1,
+            hash TEXT NOT NULL,
+            size INTEGER NOT NULL DEFAULT 0,
+            extracted_at TEXT NOT NULL
+        )',
+        'CREATE TABLE IF NOT EXISTS nodes (
+            id INTEGER PRIMARY KEY,
+            type TEXT NOT NULL,
+            name TEXT NOT NULL,
+            key TEXT UNIQUE NOT NULL,
+            file_id INTEGER REFERENCES files(id) ON DELETE CASCADE,
+            line INTEGER,
+            meta TEXT
+        )',
+        'CREATE TABLE IF NOT EXISTS edges (
+            id INTEGER PRIMARY KEY,
+            type TEXT NOT NULL,
+            from_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+            to_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+            file_id INTEGER REFERENCES files(id) ON DELETE CASCADE,
+            line INTEGER,
+            resolution TEXT,
+            confidence REAL,
+            meta TEXT,
+            UNIQUE(type, from_id, to_id, file_id, line)
+        )',
+        'CREATE TABLE IF NOT EXISTS unresolved (
+            id INTEGER PRIMARY KEY,
+            file_id INTEGER REFERENCES files(id) ON DELETE CASCADE,
+            line INTEGER,
+            kind TEXT NOT NULL,
+            expression TEXT,
+            receiver_hint TEXT,
+            member TEXT,
+            candidates TEXT
+        )',
+        'CREATE TABLE IF NOT EXISTS builds (
+            id INTEGER PRIMARY KEY,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            commit_hash TEXT,
+            mode TEXT NOT NULL,
+            files_seen INTEGER NOT NULL DEFAULT 0,
+            files_changed INTEGER NOT NULL DEFAULT 0,
+            files_affected INTEGER NOT NULL DEFAULT 0,
+            nodes INTEGER NOT NULL DEFAULT 0,
+            edges INTEGER NOT NULL DEFAULT 0,
+            unresolved INTEGER NOT NULL DEFAULT 0,
+            warnings TEXT
+        )',
+        // Every symbol (lowercase class FQCN, or "function:name") a file's resolution consulted
+        // while resolving any of its own references, regardless of whether that resolution
+        // succeeded. This is what makes an incremental build correct rather than merely fast: when
+        // a changed file adds, removes or changes a symbol, this table finds every unchanged file
+        // whose earlier resolution depended on that symbol, so it gets re-resolved too - see
+        // SPEC.md section 5 and 1.4.
+        'CREATE TABLE IF NOT EXISTS symbol_deps (
+            file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+            symbol TEXT NOT NULL,
+            PRIMARY KEY (file_id, symbol)
+        )',
+        'CREATE INDEX IF NOT EXISTS symbol_deps_symbol ON symbol_deps(symbol)',
+        'CREATE INDEX IF NOT EXISTS edges_from ON edges(from_id, type)',
+        'CREATE INDEX IF NOT EXISTS edges_to ON edges(to_id, type)',
+        'CREATE INDEX IF NOT EXISTS nodes_type ON nodes(type, name)',
+        'CREATE INDEX IF NOT EXISTS nodes_file ON nodes(file_id)',
+    ];
+
+    private const TABLES = ['symbol_deps', 'unresolved', 'edges', 'nodes', 'files', 'builds', 'meta'];
+
+    public static function install(\PDO $pdo): void
+    {
+        foreach (self::STATEMENTS as $statement) {
+            $pdo->exec($statement);
+        }
+        $stmt = $pdo->prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
+        $stmt->execute(['schema_version', (string) self::CURRENT_VERSION]);
+    }
+
+    /**
+     * Drops every table this schema knows about. `install()` only ever creates what is missing, so
+     * an older on-disk schema (a table present but with fewer columns than the current shape
+     * expects) must be dropped first - the docblock above promises a stale database triggers a
+     * full rebuild, not a best-effort column migration.
+     */
+    public static function reset(\PDO $pdo): void
+    {
+        $pdo->exec('PRAGMA foreign_keys = OFF');
+        foreach (self::TABLES as $table) {
+            $pdo->exec("DROP TABLE IF EXISTS {$table}");
+        }
+        $pdo->exec('PRAGMA foreign_keys = ON');
+    }
+
+    public static function isCurrent(\PDO $pdo): bool
+    {
+        try {
+            $stmt = $pdo->query("SELECT value FROM meta WHERE key = 'schema_version'");
+        } catch (\PDOException) {
+            // A brand new database file has no tables yet - that just means the schema is missing,
+            // not that something went wrong.
+            return false;
+        }
+        $version = $stmt !== false ? $stmt->fetchColumn() : false;
+
+        return $version !== false && (int) $version === self::CURRENT_VERSION;
+    }
+}
