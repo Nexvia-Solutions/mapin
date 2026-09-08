@@ -602,4 +602,79 @@ final class SqliteStore
         $this->pdo->prepare("DELETE FROM edges WHERE file_id = ? AND line = ? AND type IN ('mentions', 'relates_concept')")
             ->execute([$fileId, $line]);
     }
+
+    /**
+     * The generic key-value `meta` table (SPEC.md section 5), used so far only for
+     * `schema_version` (Schema::install()) - CommunityDetector's own build-level summary (SPEC.md
+     * section 8: "a summary... is written to meta") is not naturally a per-node fact the way
+     * `nodes.meta.community` is, so it belongs here instead of on any single node.
+     */
+    public function setMeta(string $key, string $value): void
+    {
+        $this->pdo->prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+            ->execute([$key, $value]);
+    }
+
+    public function getMeta(string $key): ?string
+    {
+        $stmt = $this->pdo->prepare('SELECT value FROM meta WHERE key = ?');
+        $stmt->execute([$key]);
+        $value = $stmt->fetchColumn();
+
+        return $value === false ? null : (string) $value;
+    }
+
+    /**
+     * Strips `community` out of every node's meta that currently has one, before CommunityDetector
+     * writes a fresh run's assignments - without this, a node that no longer qualifies for the
+     * projection (structurally ineligible, deleted, or simply excluded by a corrected projection
+     * rule) keeps whatever community an earlier run gave it forever, since mergeNodeMeta() only
+     * ever adds or updates a key, never removes one nothing in the new run touches.
+     */
+    public function clearCommunityMeta(): void
+    {
+        $stmt = $this->pdo->query("SELECT id, meta FROM nodes WHERE json_extract(meta, '$.community') IS NOT NULL");
+        $rows = $stmt !== false ? $stmt->fetchAll(\PDO::FETCH_ASSOC) : [];
+        $update = $this->pdo->prepare('UPDATE nodes SET meta = ? WHERE id = ?');
+        foreach ($rows as $row) {
+            $meta = json_decode((string) $row['meta'], true) ?? [];
+            unset($meta['community']);
+            $update->execute([$meta === [] ? null : json_encode($meta), $row['id']]);
+        }
+    }
+
+    /** @return array<int,string> node id => community key, for every node CommunityDetector has assigned one to */
+    public function communityMembership(): array
+    {
+        $stmt = $this->pdo->query("SELECT id, json_extract(meta, '$.community') AS community FROM nodes WHERE json_extract(meta, '$.community') IS NOT NULL");
+        $result = [];
+        foreach ($stmt !== false ? $stmt->fetchAll(\PDO::FETCH_ASSOC) : [] as $row) {
+            $result[(int) $row['id']] = (string) $row['community'];
+        }
+
+        return $result;
+    }
+
+    /**
+     * @param  int[]  $ids
+     * @return array<int, array<string,mixed>> keyed by node id
+     */
+    public function nodesByIds(array $ids): array
+    {
+        $ids = array_values(array_unique($ids));
+        if ($ids === []) {
+            return [];
+        }
+        $result = [];
+        foreach (array_chunk($ids, 500) as $chunk) {
+            $placeholders = implode(',', array_fill(0, count($chunk), '?'));
+            $stmt = $this->pdo->prepare("SELECT * FROM nodes WHERE id IN ({$placeholders})");
+            $stmt->execute($chunk);
+            foreach ($stmt->fetchAll(\PDO::FETCH_ASSOC) as $row) {
+                $result[(int) $row['id']] = $row;
+            }
+        }
+
+        return $result;
+    }
 }

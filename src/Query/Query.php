@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Mapin\Query;
 
+use Mapin\Analysis\GraphProjection;
+use Mapin\Analysis\Hubs;
 use Mapin\Graph\NodeType;
 use Mapin\Store\SqliteStore;
 
@@ -404,6 +406,63 @@ final class Query
             'key' => $node['key'],
             'documented_by' => $this->relatedKeys($pdo, 'documents', toId: (int) $node['id']),
             'documents' => $this->relatedKeys($pdo, 'documents', fromId: (int) $node['id']),
+        ]);
+    }
+
+    /**
+     * SPEC.md section 6.1: "highest degree nodes, facades excluded". Built off the exact same
+     * projection CommunityDetector uses (GraphProjection), so a node's degree here always matches
+     * what CommunityDetector's own hub-percentile step saw - never a second, drifted notion of
+     * degree. `bridges` (SPEC.md section 8's "betweenness-lite") is only present once
+     * `mapin:communities` has run; a fresh graph reports every hub with `bridges: null`, not zero,
+     * so a caller can tell "not computed" apart from "genuinely bridges nothing".
+     *
+     * @param  string[]|null  $types  NodeType values to restrict results to, or null for any type
+     */
+    public function hubs(int $limit, ?array $types = null): QueryResult
+    {
+        $graph = GraphProjection::build($this->store);
+        $stats = Hubs::compute($graph, $this->store->communityMembership());
+        $nodeRows = $this->store->nodesByIds(array_keys($stats));
+
+        $items = [];
+        foreach ($stats as $id => $s) {
+            $row = $nodeRows[$id] ?? null;
+            if ($row === null || ($types !== null && ! in_array($row['type'], $types, true))) {
+                continue;
+            }
+            $items[] = [
+                'key' => $row['key'],
+                'name' => $row['name'],
+                'type' => $row['type'],
+                'degree' => $s['degree'],
+                'bridges' => $s['bridges'],
+            ];
+        }
+        usort($items, static fn (array $a, array $b): int => ($b['degree'] <=> $a['degree']) ?: ($a['key'] <=> $b['key']));
+
+        return QueryResult::found(array_slice($items, 0, max(1, $limit)));
+    }
+
+    /**
+     * SPEC.md section 6.1: "community membership summary; requires `mapin:communities` to have
+     * run". Reports not found, with no result to fall back on, until it has - communities are never
+     * computed on demand from a query (SPEC.md section 8: analysis "runs on the stored graph, never
+     * during extraction", and a query is even further removed from extraction than that). Per-node
+     * membership is not duplicated here: it already surfaces through `node()`'s own generic
+     * `meta.community` field once CommunityDetector has written it.
+     */
+    public function communities(): QueryResult
+    {
+        $summary = $this->store->getMeta('communities_summary');
+        if ($summary === null) {
+            return QueryResult::notFound();
+        }
+
+        return QueryResult::found([
+            'communities' => json_decode($summary, true) ?? [],
+            'computed_at' => $this->store->getMeta('communities_computed_at'),
+            'resolution' => $this->store->getMeta('communities_resolution'),
         ]);
     }
 

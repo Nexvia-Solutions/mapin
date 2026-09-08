@@ -7,6 +7,7 @@ namespace Mapin;
 use Illuminate\Support\ServiceProvider;
 use Mapin\Console\Commands\BuildCommand;
 use Mapin\Console\Commands\CallersCommand;
+use Mapin\Console\Commands\CommunitiesCommand;
 use Mapin\Console\Commands\DocsCommand;
 use Mapin\Console\Commands\DoctorCommand;
 use Mapin\Console\Commands\FindCommand;
@@ -60,6 +61,7 @@ final class MapinServiceProvider extends ServiceProvider
             McpCommand::class,
             DoctorCommand::class,
             DocsCommand::class,
+            CommunitiesCommand::class,
         ]);
     }
 }

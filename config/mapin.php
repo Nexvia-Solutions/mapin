@@ -83,4 +83,19 @@ return [
         ],
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Analysis (phase 5, mapin:communities)
+    |--------------------------------------------------------------------------
+    |
+    | 'hub_percentile': nodes at or above this degree percentile are excluded
+    | from Louvain and reattached afterward to their strongest neighbour's
+    | community - SPEC.md section 16's own open question, closed here at the
+    | proposed default (top 1%) rather than left unset.
+    |
+    */
+    'communities' => [
+        'hub_percentile' => 0.99,
+    ],
+
 ];
