@@ -5,6 +5,29 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `mapin:build`'s own reported node/edge counts (and what it records into `builds`) could
+  significantly overstate the graph's real size - found 2026-09-08 running it twice against a real
+  application, before and after a `git rebase`, and seeing the reported total drop in a way that
+  looked like data loss but wasn't: `SqliteStore::counts()` (a real `SELECT COUNT(*)`) was correct
+  the whole time. Three real sources of the same shape of bug, all in how a count was computed, not
+  in what got written: `RouteExtractor` pushed one `Node` per route×middleware combination instead
+  of deduplicating by middleware alias (inflated a real application's own report by roughly 11,000);
+  extraNodes (`view()`, `DB::table()`, external classes) are only deduplicated within the one file
+  that produced them, so two files referencing the same one each counted it as new; and
+  `SqliteStore::insertEdges()` counted every row it attempted rather than the rows that actually
+  landed - including, once fixed to deduplicate by the same tuple the table's own `UNIQUE` index
+  resolves on, a second bug that fix itself introduced: `line` is nullable, and SQLite treats every
+  `NULL` as distinct from every other `NULL` in a `UNIQUE` index, so a PHP-side tuple dedup silently
+  undercounted rows that share `line: null` (or a null `file_id`, the shape route/binding edges take)
+  by treating two such rows as one. Fixed by counting what `upsertNodes()` actually returns (a
+  key-to-id map, deduplicated by construction, tracked across the whole build so a key repeating in
+  a later file doesn't count twice either) for nodes, and by measuring a real `COUNT(*)` delta
+  around `insertEdges()`'s own inserts for edges, rather than reproducing SQLite's own null-handling
+  in PHP. Verified against a real application: reported totals now match `counts()` exactly
+  (25,706 nodes, 74,250 edges, both previously overstated).
+
 ## [0.1.0] - 2026-09-08
 
 First public release. Everything below shipped in the same initial development push - phases 0

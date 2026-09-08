@@ -132,6 +132,27 @@ final class BuildRunner
         $totalNodes = 0;
         $totalEdges = 0;
         $totalUnresolved = 0;
+        // Counting the reported node total needs to survive across every separate upsertNodes() call
+        // in this one build, not just within a single call - two different files each referencing the
+        // same external class (Illuminate\Support\Str, say) each produce their own extraNode with the
+        // identical key, in two separate Resolver::resolveFile() calls (one per file). Each call's own
+        // id-by-key result is correctly deduplicated on its own, but that alone still double-counts a
+        // key seen in an earlier call - $seenNodeKeys is what makes a key count as a new node exactly
+        // once for the whole build, matching the row it actually becomes (found 2026-09-08, the same
+        // day as the per-call fix below: a real application still over-reported after that fix alone,
+        // because it never covered a key repeating ACROSS files, only within one file's own nodes).
+        $seenNodeKeys = [];
+        $countNewNodes = function (array $nodeIds) use (&$seenNodeKeys): int {
+            $new = 0;
+            foreach (array_keys($nodeIds) as $key) {
+                if (! isset($seenNodeKeys[$key])) {
+                    $seenNodeKeys[$key] = true;
+                    $new++;
+                }
+            }
+
+            return $new;
+        };
 
         // Pass 1: upsert every file's own nodes first, in its own transaction. Route/binding
         // extraction below and edge resolution in pass 2 both need these nodes to already exist:
@@ -148,7 +169,7 @@ final class BuildRunner
         $jsCallsByFile = [];
         /** @var array<string, array<string,int>> $nodeIdsByFile */
         $nodeIdsByFile = [];
-        $store->transaction(function () use ($store, $filesToResolve, $fragments, $fileIds, $markdownExtractor, $jsExtractor, &$markdownSectionsByFile, &$jsCallsByFile, &$nodeIdsByFile, &$totalNodes): void {
+        $store->transaction(function () use ($store, $filesToResolve, $fragments, $fileIds, $markdownExtractor, $jsExtractor, $countNewNodes, &$markdownSectionsByFile, &$jsCallsByFile, &$nodeIdsByFile, &$totalNodes): void {
             foreach ($filesToResolve as $file) {
                 if ($file->lang === 'md') {
                     $parsed = $markdownExtractor->nodes($file);
@@ -157,7 +178,7 @@ final class BuildRunner
                     $store->pruneStaleNodes($fileId, array_map(static fn ($n) => $n->key, $parsed['nodes']));
                     $store->clearFileOutput($fileId);
                     $nodeIdsByFile[$file->relativePath] = $store->upsertNodes($parsed['nodes'], $fileId);
-                    $totalNodes += count($parsed['nodes']);
+                    $totalNodes += $countNewNodes($nodeIdsByFile[$file->relativePath]);
 
                     continue;
                 }
@@ -168,7 +189,7 @@ final class BuildRunner
                     $store->pruneStaleNodes($fileId, array_map(static fn ($n) => $n->key, $parsed['nodes']));
                     $store->clearFileOutput($fileId);
                     $nodeIdsByFile[$file->relativePath] = $store->upsertNodes($parsed['nodes'], $fileId);
-                    $totalNodes += count($parsed['nodes']);
+                    $totalNodes += $countNewNodes($nodeIdsByFile[$file->relativePath]);
 
                     continue;
                 }
@@ -180,7 +201,7 @@ final class BuildRunner
                 $store->pruneStaleNodes($fileId, array_map(static fn ($n) => $n->key, $fragment->nodes));
                 $store->clearFileOutput($fileId);
                 $nodeIdsByFile[$file->relativePath] = $store->upsertNodes($fragment->nodes, $fileId);
-                $totalNodes += count($fragment->nodes);
+                $totalNodes += $countNewNodes($nodeIdsByFile[$file->relativePath]);
             }
         });
 
@@ -188,15 +209,15 @@ final class BuildRunner
         // extractor table: their input is "booted router"/"booted container", not a file set), so
         // they run once per build here - now that every project class/method node exists, their
         // own edges (routes_to, uses_middleware, binds) can resolve their target IDs too.
-        [$routeFragment, $routeEdgeCount] = $this->extractRoutes($ctx, $index, $store);
-        $totalNodes += count($routeFragment->nodes);
+        [$routeNodeCount, $routeEdgeCount] = $this->extractRoutes($ctx, $index, $store, $countNewNodes);
+        $totalNodes += $routeNodeCount;
         $totalEdges += $routeEdgeCount;
         $totalEdges += $this->extractBindings($ctx, $index, $store);
         $routeKeysByName = $store->routeKeysByName();
 
         $resolver = new Resolver($index, $routeKeysByName);
 
-        $store->transaction(function () use ($store, $filesToResolve, $fragments, $fileIds, $phpExtractor, $resolver, $markdownExtractor, $markdownSectionsByFile, $jsExtractor, $jsCallsByFile, $nodeIdsByFile, &$totalNodes, &$totalEdges, &$totalUnresolved): void {
+        $store->transaction(function () use ($store, $filesToResolve, $fragments, $fileIds, $phpExtractor, $resolver, $markdownExtractor, $markdownSectionsByFile, $jsExtractor, $jsCallsByFile, $nodeIdsByFile, $countNewNodes, &$totalNodes, &$totalEdges, &$totalUnresolved): void {
             // Pass 2: resolve each file's calls/instantiates/etc, but still don't look up target
             // node IDs yet - an extraNode (view, table, component) created while resolving one
             // file could be the target of an edge from a file resolved earlier in this same loop.
@@ -239,8 +260,15 @@ final class BuildRunner
                     $edges = array_merge($edges, $resolved['edges']);
                     $unresolved = $resolved['unresolved'];
                     if ($resolved['extraNodes'] !== []) {
-                        $totalNodes += count($resolved['extraNodes']);
-                        $nodeIds = array_merge($nodeIds, $store->upsertNodes($resolved['extraNodes'], null));
+                        // extraNodes are only deduplicated within the one ReferenceVisitor instance
+                        // that produced them (one per file) - two files referencing the same
+                        // view/table/external class each contribute their own extraNode with the same
+                        // key, in two separate upsertNodes() calls here. $countNewNodes (not a plain
+                        // count()) is what makes that collapse in the total too, the same way it
+                        // already collapses in the row this actually becomes.
+                        $extraNodeIds = $store->upsertNodes($resolved['extraNodes'], null);
+                        $totalNodes += $countNewNodes($extraNodeIds);
+                        $nodeIds = array_merge($nodeIds, $extraNodeIds);
                     }
                 }
 
@@ -328,28 +356,33 @@ final class BuildRunner
         return $matched ? new Fragment($nodes, $edges, $warnings) : null;
     }
 
-    /** @return array{0: Fragment, 1: int} [fragment, edges persisted] */
-    private function extractRoutes(ExtractionContext $ctx, SymbolIndex $index, SqliteStore $store): array
+    /**
+     * @param  callable(array<string,int>):int  $countNewNodes
+     * @return array{0: int, 1: int} [nodes persisted, edges persisted]
+     */
+    private function extractRoutes(ExtractionContext $ctx, SymbolIndex $index, SqliteStore $store, callable $countNewNodes): array
     {
         $extractor = new RouteExtractor;
         $fragment = $extractor->extract($ctx, $index);
         if ($fragment->nodes === [] && $fragment->edges === []) {
-            return [$fragment, 0];
+            return [0, 0];
         }
 
-        $edgeCount = $store->transaction(function () use ($store, $fragment): int {
+        $nodeCount = 0;
+        $edgeCount = $store->transaction(function () use ($store, $fragment, $countNewNodes, &$nodeCount): int {
             $store->clearRouteData();
-            $nodeIds = $store->upsertNodes($fragment->nodes, null);
+            $routeNodeIds = $store->upsertNodes($fragment->nodes, null);
+            $nodeCount = $countNewNodes($routeNodeIds);
             $targetKeys = array_merge(
                 array_map(static fn ($e) => $e->fromKey, $fragment->edges),
                 array_map(static fn ($e) => $e->toKey, $fragment->edges),
             );
-            $nodeIds = array_merge($nodeIds, $store->nodeIds($targetKeys));
+            $nodeIds = array_merge($routeNodeIds, $store->nodeIds($targetKeys));
 
             return $store->insertEdges($fragment->edges, $nodeIds, null);
         });
 
-        return [$fragment, $edgeCount];
+        return [$nodeCount, $edgeCount];
     }
 
     private function extractBindings(ExtractionContext $ctx, SymbolIndex $index, SqliteStore $store): int

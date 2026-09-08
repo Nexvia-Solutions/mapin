@@ -181,7 +181,13 @@ final class SqliteStore
              ON CONFLICT(type, from_id, to_id, file_id, line) DO UPDATE SET resolution = excluded.resolution,
                 confidence = excluded.confidence, meta = excluded.meta',
         );
-        $count = 0;
+        // Measured as a real COUNT(*) delta, not by deduplicating the tuple in PHP (tried first,
+        // reverted 2026-09-08): `line` is nullable, and SQLite's own UNIQUE index treats every NULL
+        // as distinct from every other NULL, so two Edge objects sharing (type, from_id, to_id,
+        // file_id) with line=null are NOT the same row on conflict - they are two real rows. A PHP
+        // string key built from those same columns can't reproduce that without reimplementing
+        // SQLite's own null-handling; asking the table what actually changed sidesteps needing to.
+        $before = (int) $this->pdo->query('SELECT COUNT(*) FROM edges')->fetchColumn();
         foreach ($edges as $edge) {
             $fromId = $nodeIds[$edge->fromKey] ?? null;
             $toId = $nodeIds[$edge->toKey] ?? null;
@@ -192,10 +198,9 @@ final class SqliteStore
                 $edge->type->value, $fromId, $toId, $fileId, $edge->line,
                 $edge->resolution?->value, $edge->confidence, $edge->meta === [] ? null : json_encode($edge->meta),
             ]);
-            $count++;
         }
 
-        return $count;
+        return ((int) $this->pdo->query('SELECT COUNT(*) FROM edges')->fetchColumn()) - $before;
     }
 
     /** @param UnresolvedRow[] $rows */

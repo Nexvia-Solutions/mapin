@@ -43,6 +43,7 @@ final class RouteExtractor
 
         $nodes = [];
         $edges = [];
+        $middlewareNodes = [];
         $middlewareAliases = $ctx->router->getMiddleware();
 
         foreach ($routes as $route) {
@@ -79,12 +80,16 @@ final class RouteExtractor
                 }
                 $resolvedClass = $middlewareAliases[$alias] ?? (str_contains($alias, ':') ? ($middlewareAliases[explode(':', $alias, 2)[0]] ?? null) : null);
                 $middlewareKey = Key::middleware($alias);
-                $nodes[] = new Node(NodeType::Middleware, $alias, $middlewareKey, meta: array_filter(['class' => $resolvedClass]));
+                // Keyed by $middlewareKey, not pushed - the same alias is used by many routes, and a
+                // route count's worth of duplicate Node objects for one real middleware inflated the
+                // build report's node count by ~11,000 on a real application (found 2026-09-08),
+                // even though upsertNodes() already collapsed them to the correct single row.
+                $middlewareNodes[$middlewareKey] = new Node(NodeType::Middleware, $alias, $middlewareKey, meta: array_filter(['class' => $resolvedClass]));
                 $edges[] = new Edge(EdgeType::UsesMiddleware, $routeKey, $middlewareKey);
             }
         }
 
-        return new Fragment($nodes, $edges);
+        return new Fragment([...$nodes, ...array_values($middlewareNodes)], $edges);
     }
 
     private function controllerTarget(string $action, SymbolIndex $index): ?string

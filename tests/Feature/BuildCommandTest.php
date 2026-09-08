@@ -2,7 +2,12 @@
 
 declare(strict_types=1);
 
+use Fixture\Http\Controllers\BookController;
+use Fixture\Http\Controllers\CatalogController;
+use Fixture\Http\Controllers\DashboardController;
+use Fixture\Http\Middleware\EnsureTenant;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Route;
 use Mapin\Store\SqliteStore;
 use Mapin\Tests\Support\PluginTagExtractor;
 
@@ -82,4 +87,33 @@ it('does not reparse unchanged files on the next build', function () {
     $lastBuild = $store->lastBuild();
     expect($lastBuild['mode'])->toBe('incremental');
     expect((int) $lastBuild['files_changed'])->toBe(0);
+});
+
+it('reports the same node and edge counts mapin:build prints as the graph actually holds', function () {
+    // Regression for a real bug (found 2026-09-08 running mapin:build against a real application
+    // twice, before and after a git rebase): multiple routes sharing one middleware alias each
+    // pushed their own Node object for it, so the build report counted the same real row several
+    // times over - upsertNodes() correctly collapsed them to one row via ON CONFLICT(key), but the
+    // printed/recorded count came from the input array size, not what actually landed in the table.
+    // Three routes below share 'ensure-tenant' on purpose, to reproduce the exact shape that hid
+    // this: no existing test registered more than one route on the same middleware.
+    Route::get('/dashboard', [DashboardController::class, 'index'])->middleware('ensure-tenant');
+    Route::get('/catalog/{isbn}', [CatalogController::class, 'show'])->middleware('ensure-tenant');
+    Route::get('/books', [BookController::class, 'store'])->middleware('ensure-tenant');
+    $this->app->make('router')->aliasMiddleware('ensure-tenant', EnsureTenant::class);
+
+    $this->artisan('mapin:build', ['--full' => true])->assertExitCode(0);
+
+    $store = new SqliteStore(config('mapin.storage'));
+    $lastBuild = $store->lastBuild();
+    $counts = $store->counts();
+
+    expect((int) $lastBuild['nodes'])->toBe($counts['nodes'])
+        ->and((int) $lastBuild['edges'])->toBe($counts['edges']);
+
+    // The real assertion behind the numbers matching: one middleware row, not three.
+    $middlewareCount = $store->pdo()
+        ->query("SELECT COUNT(*) FROM nodes WHERE type = 'middleware' AND key = 'middleware:ensure-tenant'")
+        ->fetchColumn();
+    expect((int) $middlewareCount)->toBe(1);
 });
