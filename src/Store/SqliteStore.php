@@ -427,6 +427,31 @@ final class SqliteStore
         ];
     }
 
+    /**
+     * Docs-focused slice of counts(), for `mapin:docs` (SPEC.md section 9) to report on the
+     * Markdown module specifically rather than the whole graph.
+     *
+     * @return array<string,int>
+     */
+    public function docsCounts(): array
+    {
+        $unresolvedStmt = $this->pdo->prepare("SELECT COUNT(*) FROM unresolved WHERE kind IN ('documents', 'links_doc')");
+        $unresolvedStmt->execute();
+
+        return [
+            'docs' => (int) $this->pdo->query("SELECT COUNT(*) FROM nodes WHERE type = 'doc'")->fetchColumn(),
+            'sections' => (int) $this->pdo->query("SELECT COUNT(*) FROM nodes WHERE type = 'section'")->fetchColumn(),
+            'documents_edges' => (int) $this->pdo->query("SELECT COUNT(*) FROM edges WHERE type = 'documents'")->fetchColumn(),
+            'links_doc_edges' => (int) $this->pdo->query("SELECT COUNT(*) FROM edges WHERE type = 'links_doc'")->fetchColumn(),
+            'unresolved' => (int) $unresolvedStmt->fetchColumn(),
+            // Always reported, whether or not --with-llm ran this particular invocation - a
+            // standing view of how much semantic data the graph already carries from any past run.
+            'concepts' => (int) $this->pdo->query("SELECT COUNT(*) FROM nodes WHERE type = 'concept'")->fetchColumn(),
+            'mentions_edges' => (int) $this->pdo->query("SELECT COUNT(*) FROM edges WHERE type = 'mentions'")->fetchColumn(),
+            'relates_concept_edges' => (int) $this->pdo->query("SELECT COUNT(*) FROM edges WHERE type = 'relates_concept'")->fetchColumn(),
+        ];
+    }
+
     /** @return array<string,mixed>[] */
     public function findNodes(string $name, ?NodeType $type = null): array
     {
@@ -510,5 +535,71 @@ final class SqliteStore
         $stmt->execute();
 
         return $stmt->fetchAll(\PDO::FETCH_ASSOC);
+    }
+
+    /** @return array<string,mixed>|null */
+    public function findRouteByName(string $name): ?array
+    {
+        $stmt = $this->pdo->prepare("SELECT * FROM nodes WHERE type = 'route' AND json_extract(meta, '$.name') = ? LIMIT 1");
+        $stmt->execute([$name]);
+        $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+
+        return $row === false ? null : $row;
+    }
+
+    /**
+     * Every route node whose URI matches, regardless of HTTP method - a route key embeds the
+     * method (`route:GET /admin/orders`), but a bare URI mentioned in prose does not specify one,
+     * so more than one match here is a genuine ambiguity, not a bug.
+     *
+     * @return array<string,mixed>[]
+     */
+    public function findRoutesByUri(string $uri): array
+    {
+        $uri = '/'.ltrim($uri, '/');
+        $stmt = $this->pdo->prepare("SELECT * FROM nodes WHERE type = 'route' AND key LIKE 'route:% ' || ? ESCAPE '\\'");
+        $stmt->execute([str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $uri)]);
+
+        return $stmt->fetchAll(\PDO::FETCH_ASSOC);
+    }
+
+    /** @return array<string,mixed>[] every `doc` node with its file path joined in - LlmConceptExtractor's own entry point into what Markdown files exist to re-read. */
+    public function docNodes(): array
+    {
+        $stmt = $this->pdo->query(
+            "SELECT nodes.*, files.path AS file_path FROM nodes JOIN files ON files.id = nodes.file_id WHERE nodes.type = 'doc'",
+        );
+
+        return $stmt !== false ? $stmt->fetchAll(\PDO::FETCH_ASSOC) : [];
+    }
+
+    /**
+     * Merges into an existing node's stored meta rather than replacing it - unlike upsertNodes(),
+     * which always overwrites a node's whole meta column. LlmConceptExtractor uses this to stamp a
+     * section's `llm_hash` onto the exact same node MarkdownExtractor already wrote `anchor`/`level`
+     * into, without a second write ever being able to clobber the first regardless of which ran more
+     * recently.
+     *
+     * @param  array<string,mixed>  $meta
+     */
+    public function mergeNodeMeta(int $nodeId, array $meta): void
+    {
+        $stmt = $this->pdo->prepare('SELECT meta FROM nodes WHERE id = ?');
+        $stmt->execute([$nodeId]);
+        $current = json_decode((string) ($stmt->fetchColumn() ?: '{}'), true) ?? [];
+        $merged = [...$current, ...$meta];
+        $this->pdo->prepare('UPDATE nodes SET meta = ? WHERE id = ?')->execute([json_encode($merged), $nodeId]);
+    }
+
+    /**
+     * Deletes the `mentions`/`relates_concept` edges a specific section previously produced, keyed
+     * by (file_id, line) - the section's own heading line, the same attribution MarkdownExtractor
+     * already uses to scope `documents`/`links_doc` edges to one section. Called before regenerating
+     * a section whose content hash changed, so a stale concept link never survives next to a fresh one.
+     */
+    public function clearSectionConceptEdges(int $fileId, int $line): void
+    {
+        $this->pdo->prepare("DELETE FROM edges WHERE file_id = ? AND line = ? AND type IN ('mentions', 'relates_concept')")
+            ->execute([$fileId, $line]);
     }
 }

@@ -8,6 +8,7 @@ use Laravel\Mcp\Server;
 use Laravel\Mcp\Server\Tool;
 use Mapin\Mcp\Adapters\CalleesToolAdapter;
 use Mapin\Mcp\Adapters\CallersToolAdapter;
+use Mapin\Mcp\Adapters\DocsToolAdapter;
 use Mapin\Mcp\Adapters\FindToolAdapter;
 use Mapin\Mcp\Adapters\ImpactToolAdapter;
 use Mapin\Mcp\Adapters\ModelToolAdapter;
@@ -19,8 +20,9 @@ use Mapin\Mcp\Adapters\UnresolvedToolAdapter;
 use Mapin\Mcp\Adapters\ViewToolAdapter;
 
 /**
- * hubs, communities and docs are not registered here: they need phase 4/5 data (Markdown module,
- * community detection) that does not exist yet - SPEC.md section 1.6 tracks this, not silence.
+ * hubs and communities are not registered here: they need phase 5 data (community detection) that
+ * does not exist yet - SPEC.md section 1.6 tracks this, not silence. docs was in the same state
+ * until phase 4 built the Markdown module it depends on.
  */
 final class MapinServer extends Server
 {
@@ -47,5 +49,6 @@ final class MapinServer extends Server
         ModelToolAdapter::class,
         UnresolvedToolAdapter::class,
         StatsToolAdapter::class,
+        DocsToolAdapter::class,
     ];
 }

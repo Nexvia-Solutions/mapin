@@ -23,7 +23,7 @@ final class Query
     private const REVERSE_IMPACT_EDGE_TYPES = [
         'calls', 'routes_to', 'renders', 'dispatches', 'schedules', 'listens',
         'observes', 'injects', 'instantiates', 'resolves', 'links_route',
-        'includes', 'uses_component',
+        'includes', 'uses_component', 'documents',
     ];
 
     public function __construct(
@@ -220,7 +220,7 @@ final class Query
             $frontier = $next;
         }
 
-        $grouped = ['routes' => [], 'views' => [], 'jobs' => [], 'commands' => [], 'methods' => [], 'classes' => []];
+        $grouped = ['routes' => [], 'views' => [], 'jobs' => [], 'commands' => [], 'methods' => [], 'classes' => [], 'docs' => []];
         foreach ($found as $item) {
             $bucket = match ($item['type']) {
                 'route' => 'routes',
@@ -228,6 +228,7 @@ final class Query
                 'job' => 'jobs',
                 'command' => 'commands',
                 'method' => 'methods',
+                'section' => 'docs',
                 default => 'classes',
             };
             $grouped[$bucket][] = ['key' => $item['key'], 'name' => $item['name'], 'depth' => $item['depth'], 'via' => $item['via']];
@@ -305,7 +306,7 @@ final class Query
     {
         $node = str_contains($uriOrName, ' ')
             ? $this->store->findNodeByKey('route:'.strtoupper(explode(' ', $uriOrName, 2)[0]).' /'.ltrim(explode(' ', $uriOrName, 2)[1], '/'))
-            : $this->findRouteByName($uriOrName);
+            : $this->store->findRouteByName($uriOrName);
 
         if ($node === null) {
             return QueryResult::notFound();
@@ -382,6 +383,30 @@ final class Query
         ]);
     }
 
+    /**
+     * SPEC.md section 6.1: "sections that document the node, and nodes documented by a section" -
+     * both directions of the same `documents` edge, read off whichever side `$key` turns out to be.
+     * A class/route/view/table/file key only ever has `documented_by` entries (nothing documents a
+     * section); a section key only ever has `documents` entries (a section is never itself
+     * documented). Nothing but a real `documents` edge is reported either way - see
+     * MarkdownExtractor's own docblock for why an ambiguous mention lands in `unresolved` instead.
+     */
+    public function docs(string $key): QueryResult
+    {
+        $node = $this->store->findNodeByKey($key);
+        if ($node === null) {
+            return QueryResult::notFound($this->toSuggestions($this->store->findNodes($key)));
+        }
+
+        $pdo = $this->store->pdo();
+
+        return QueryResult::found([
+            'key' => $node['key'],
+            'documented_by' => $this->relatedKeys($pdo, 'documents', toId: (int) $node['id']),
+            'documents' => $this->relatedKeys($pdo, 'documents', fromId: (int) $node['id']),
+        ]);
+    }
+
     public function unresolved(?string $file, ?string $member, int $limit): QueryResult
     {
         $rows = $this->store->unresolvedRows($file, $member, max(1, $limit));
@@ -403,6 +428,16 @@ final class Query
             'counts' => $this->store->counts(),
             'last_build' => $this->store->lastBuild(),
         ]);
+    }
+
+    /**
+     * CLI-only report for `mapin:docs` (SPEC.md section 9), not a section 6.1 tool in its own
+     * right - `docs {key}` is the shared CLI/MCP tool; this is the build-side counterpart to it,
+     * the same way `stats` reports on the whole graph after `mapin:build`.
+     */
+    public function docsSummary(): QueryResult
+    {
+        return QueryResult::found($this->store->docsCounts());
     }
 
     /**
@@ -473,15 +508,6 @@ final class Query
     }
 
     /** @return array<string,mixed>|null */
-    private function findRouteByName(string $name): ?array
-    {
-        $stmt = $this->store->pdo()->prepare("SELECT * FROM nodes WHERE type = 'route' AND json_extract(meta, '$.name') = ? LIMIT 1");
-        $stmt->execute([$name]);
-        $row = $stmt->fetch(\PDO::FETCH_ASSOC);
-
-        return $row === false ? null : $row;
-    }
-
     /** @return string[] */
     private function relatedKeys(\PDO $pdo, string $edgeType, ?int $fromId = null, ?int $toId = null): array
     {

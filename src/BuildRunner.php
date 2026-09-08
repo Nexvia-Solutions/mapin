@@ -13,6 +13,7 @@ use Mapin\Extract\Contracts\SourceFile;
 use Mapin\Extract\Contracts\UnresolvedRow;
 use Mapin\Extract\Discovery\FileDiscovery;
 use Mapin\Extract\Discovery\Hasher;
+use Mapin\Extract\Markdown\MarkdownExtractor;
 use Mapin\Extract\Php\PhpExtractor;
 use Mapin\Extract\Routes\RouteExtractor;
 use Mapin\Extract\SymbolIndex;
@@ -127,11 +128,28 @@ final class BuildRunner
         // Pass 1: upsert every file's own nodes first, in its own transaction. Route/binding
         // extraction below and edge resolution in pass 2 both need these nodes to already exist:
         // an edge from one file in this batch can target a class declared by another file in the
-        // same batch, and route/binding edges target project classes too.
+        // same batch, and route/binding edges target project classes too. Markdown files' own doc
+        // and section nodes are upserted here too, for the same reason: a same-page anchor link or
+        // a link to another markdown file in this same batch needs that file's own doc node to
+        // already exist by the time links are resolved in pass 2, not just be about to.
+        $markdownExtractor = new MarkdownExtractor;
+        /** @var array<string, array<int, array{level: int, title: string, anchor: string, line: int, text: string}>> $markdownSectionsByFile */
+        $markdownSectionsByFile = [];
         /** @var array<string, array<string,int>> $nodeIdsByFile */
         $nodeIdsByFile = [];
-        $store->transaction(function () use ($store, $filesToResolve, $fragments, $fileIds, &$nodeIdsByFile, &$totalNodes): void {
+        $store->transaction(function () use ($store, $filesToResolve, $fragments, $fileIds, $markdownExtractor, &$markdownSectionsByFile, &$nodeIdsByFile, &$totalNodes): void {
             foreach ($filesToResolve as $file) {
+                if ($file->lang === 'md') {
+                    $parsed = $markdownExtractor->nodes($file);
+                    $markdownSectionsByFile[$file->relativePath] = $parsed['sections'];
+                    $fileId = $fileIds[$file->relativePath];
+                    $store->pruneStaleNodes($fileId, array_map(static fn ($n) => $n->key, $parsed['nodes']));
+                    $store->clearFileOutput($fileId);
+                    $nodeIdsByFile[$file->relativePath] = $store->upsertNodes($parsed['nodes'], $fileId);
+                    $totalNodes += count($parsed['nodes']);
+
+                    continue;
+                }
                 $fragment = $fragments[$file->relativePath] ?? null;
                 if ($fragment === null) {
                     continue;
@@ -156,19 +174,31 @@ final class BuildRunner
 
         $resolver = new Resolver($index, $routeKeysByName);
 
-        $store->transaction(function () use ($store, $filesToResolve, $fragments, $fileIds, $phpExtractor, $resolver, $nodeIdsByFile, &$totalNodes, &$totalEdges, &$totalUnresolved): void {
+        $store->transaction(function () use ($store, $filesToResolve, $fragments, $fileIds, $phpExtractor, $resolver, $markdownExtractor, $markdownSectionsByFile, $nodeIdsByFile, &$totalNodes, &$totalEdges, &$totalUnresolved): void {
             // Pass 2: resolve each file's calls/instantiates/etc, but still don't look up target
             // node IDs yet - an extraNode (view, table, component) created while resolving one
             // file could be the target of an edge from a file resolved earlier in this same loop.
+            // Markdown files resolve their links and mentions here too, now that every other
+            // file's nodes - including every other markdown file's own doc/section nodes from pass
+            // 1 above, and the routes/bindings extracted between pass 1 and here - exist to search.
             /** @var array<string, array{0: int, 1: array<string,int>, 2: Edge[], 3: UnresolvedRow[]}> $perFile */
             $perFile = [];
             foreach ($filesToResolve as $file) {
+                $fileId = $fileIds[$file->relativePath];
+                $nodeIds = $nodeIdsByFile[$file->relativePath] ?? [];
+
+                if ($file->lang === 'md') {
+                    $sections = $markdownSectionsByFile[$file->relativePath] ?? [];
+                    $resolved = $markdownExtractor->edges($file, $sections, $store);
+                    $perFile[$file->relativePath] = [$fileId, $nodeIds, $resolved['edges'], $resolved['unresolved']];
+
+                    continue;
+                }
+
                 $fragment = $fragments[$file->relativePath] ?? null;
                 if ($fragment === null) {
                     continue;
                 }
-                $fileId = $fileIds[$file->relativePath];
-                $nodeIds = $nodeIdsByFile[$file->relativePath] ?? [];
 
                 $edges = $fragment->edges;
                 $unresolved = [];

@@ -64,4 +64,25 @@ final class Key
     {
         return 'table:'.$name;
     }
+
+    public static function doc(string $relativePath): string
+    {
+        return 'doc:'.$relativePath;
+    }
+
+    /**
+     * SPEC.md section 3.1's own key-format table shows this as `doc:path#anchor`, reusing the
+     * `doc` prefix - a copy-paste artifact from the row above it, inconsistent with every other
+     * type's own prefix convention and fixed here rather than carried forward as a real decision.
+     */
+    public static function section(string $relativePath, string $anchor): string
+    {
+        return 'section:'.$relativePath.'#'.$anchor;
+    }
+
+    /** Only ever created by the optional LLM layer (SPEC.md section 3.1) - $slug is GitHub-style slugified, same algorithm as a section's own anchor. */
+    public static function concept(string $slug): string
+    {
+        return 'concept:'.$slug;
+    }
 }

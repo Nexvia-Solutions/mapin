@@ -25,7 +25,7 @@ return [
     | queries like impact/callers report against.
     |
     */
-    'paths' => ['app', 'routes', 'config', 'resources/views'],
+    'paths' => ['app', 'routes', 'config', 'resources/views', 'docs'],
 
     /*
     |--------------------------------------------------------------------------
@@ -62,5 +62,25 @@ return [
     |
     */
     'heuristics' => false,
+
+    /*
+    |--------------------------------------------------------------------------
+    | Semantic layer (phase 6, opt-in via --with-llm)
+    |--------------------------------------------------------------------------
+    |
+    | Never consulted unless `mapin:docs --with-llm` is run - see SPEC.md section
+    | 13's "never send code to an LLM without an explicit flag" rule. 'driver' is
+    | 'null' (the default: no network calls, ever) or 'ollama'.
+    |
+    */
+    'llm' => [
+        'driver' => env('MAPIN_LLM_DRIVER', 'null'),
+
+        'ollama' => [
+            'base_url' => env('MAPIN_OLLAMA_URL', 'http://127.0.0.1:11434'),
+            'model' => env('MAPIN_OLLAMA_MODEL', 'phi3:mini'),
+            'timeout' => 30,
+        ],
+    ],
 
 ];

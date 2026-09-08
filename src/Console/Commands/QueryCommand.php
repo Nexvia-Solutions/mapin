@@ -7,6 +7,7 @@ namespace Mapin\Console\Commands;
 use Illuminate\Console\Command;
 use Mapin\Mcp\Tools\CalleesTool;
 use Mapin\Mcp\Tools\CallersTool;
+use Mapin\Mcp\Tools\DocsTool;
 use Mapin\Mcp\Tools\FindTool;
 use Mapin\Mcp\Tools\ImpactTool;
 use Mapin\Mcp\Tools\ModelTool;
@@ -31,7 +32,7 @@ use Mapin\Store\SqliteStore;
 final class QueryCommand extends Command
 {
     /** @var string */
-    protected $signature = 'mapin:query {tool : find|node|callers|callees|impact|path|route|view|model|unresolved|stats}
+    protected $signature = 'mapin:query {tool : find|node|callers|callees|impact|path|route|view|model|unresolved|stats|docs}
         {--arg=* : key=value, repeatable}';
 
     /** @var string */
@@ -50,6 +51,7 @@ final class QueryCommand extends Command
         'model' => ModelTool::class,
         'unresolved' => UnresolvedTool::class,
         'stats' => StatsTool::class,
+        'docs' => DocsTool::class,
     ];
 
     public function handle(): int

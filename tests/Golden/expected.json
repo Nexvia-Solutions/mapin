@@ -22,6 +22,8 @@
         "class:Fixture\\Services\\TenantContext",
         "component:alert",
         "component:components.card",
+        "doc:docs/architecture.md",
+        "doc:docs/models.md",
         "external:Illuminate\\Console\\Scheduling\\Schedule",
         "external:Illuminate\\Support\\Facades\\Event",
         "external:Illuminate\\Support\\Facades\\Facade",
@@ -98,6 +100,12 @@
         "route:GET /storage/{path}",
         "route:POST /books",
         "route:PUT /storage/{path}",
+        "section:docs/architecture.md#architecture",
+        "section:docs/architecture.md#conventions",
+        "section:docs/architecture.md#routing",
+        "section:docs/architecture.md#source-layout",
+        "section:docs/models.md#book",
+        "section:docs/models.md#models",
         "table:authors",
         "table:library_books",
         "view:dashboard.index",
@@ -419,6 +427,42 @@
         },
         {
             "type": "declares",
+            "from": "doc:docs/architecture.md",
+            "to": "section:docs/architecture.md#architecture",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "doc:docs/architecture.md",
+            "to": "section:docs/architecture.md#conventions",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "doc:docs/architecture.md",
+            "to": "section:docs/architecture.md#routing",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "doc:docs/architecture.md",
+            "to": "section:docs/architecture.md#source-layout",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "doc:docs/models.md",
+            "to": "section:docs/models.md#book",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "doc:docs/models.md",
+            "to": "section:docs/models.md#models",
+            "resolution": null
+        },
+        {
+            "type": "declares",
             "from": "file:app/MapinFixture/Contracts/PricingEngine.php",
             "to": "class:Fixture\\Contracts\\PricingEngine",
             "resolution": null
@@ -550,6 +594,60 @@
             "resolution": null
         },
         {
+            "type": "documents",
+            "from": "section:docs/architecture.md#architecture",
+            "to": "class:Fixture\\Http\\Controllers\\CatalogController",
+            "resolution": null
+        },
+        {
+            "type": "documents",
+            "from": "section:docs/architecture.md#architecture",
+            "to": "class:Fixture\\Services\\Catalog",
+            "resolution": null
+        },
+        {
+            "type": "documents",
+            "from": "section:docs/architecture.md#conventions",
+            "to": "table:authors",
+            "resolution": null
+        },
+        {
+            "type": "documents",
+            "from": "section:docs/architecture.md#conventions",
+            "to": "table:library_books",
+            "resolution": null
+        },
+        {
+            "type": "documents",
+            "from": "section:docs/architecture.md#routing",
+            "to": "route:GET /reports",
+            "resolution": null
+        },
+        {
+            "type": "documents",
+            "from": "section:docs/architecture.md#routing",
+            "to": "route:POST /books",
+            "resolution": null
+        },
+        {
+            "type": "documents",
+            "from": "section:docs/architecture.md#source-layout",
+            "to": "file:app/MapinFixture/Models/Book.php",
+            "resolution": null
+        },
+        {
+            "type": "documents",
+            "from": "section:docs/models.md#book",
+            "to": "class:Fixture\\Models\\Book",
+            "resolution": null
+        },
+        {
+            "type": "documents",
+            "from": "section:docs/models.md#book",
+            "to": "table:library_books",
+            "resolution": null
+        },
+        {
             "type": "implements",
             "from": "class:Fixture\\Services\\StandardPricingEngine",
             "to": "class:Fixture\\Contracts\\PricingEngine",
@@ -584,6 +682,24 @@
             "from": "method:Fixture\\Providers\\BookScheduleProvider::schedule",
             "to": "class:Fixture\\Jobs\\NotifyNewBook",
             "resolution": "new"
+        },
+        {
+            "type": "links_doc",
+            "from": "doc:docs/architecture.md",
+            "to": "doc:docs/architecture.md",
+            "resolution": null
+        },
+        {
+            "type": "links_doc",
+            "from": "doc:docs/architecture.md",
+            "to": "doc:docs/models.md",
+            "resolution": null
+        },
+        {
+            "type": "links_doc",
+            "from": "doc:docs/models.md",
+            "to": "doc:docs/architecture.md",
+            "resolution": null
         },
         {
             "type": "links_route",

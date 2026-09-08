@@ -56,7 +56,7 @@ final class BuildCommand extends Command
             $this->line((string) json_encode($report->toArray(), JSON_PRETTY_PRINT));
         } else {
             $this->info(sprintf(
-                'Mapin: %s build in %.2fs — %d files seen, %d changed, %d affected, %d deleted, %d nodes, %d edges, %d unresolved.',
+                'Mapin: %s build in %.2fs, %d files seen, %d changed, %d affected, %d deleted, %d nodes, %d edges, %d unresolved.',
                 $report->mode,
                 $report->durationSeconds,
                 $report->filesSeen,
