@@ -12,6 +12,7 @@ use Mapin\Console\Commands\DocsCommand;
 use Mapin\Console\Commands\DoctorCommand;
 use Mapin\Console\Commands\FindCommand;
 use Mapin\Console\Commands\ImpactCommand;
+use Mapin\Console\Commands\InstallHooksCommand;
 use Mapin\Console\Commands\McpCommand;
 use Mapin\Console\Commands\MissesCommand;
 use Mapin\Console\Commands\ModelCommand;
@@ -64,6 +65,7 @@ final class MapinServiceProvider extends ServiceProvider
             DocsCommand::class,
             CommunitiesCommand::class,
             MissesCommand::class,
+            InstallHooksCommand::class,
         ]);
     }
 }

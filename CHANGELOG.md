@@ -7,12 +7,26 @@ All notable changes to this project are documented here. Format loosely follows
 
 ### Added
 
+- `mapin:install-hooks`: installs `post-commit`/`post-merge` git hooks that rebuild the graph
+  incrementally in the background (never blocking the commit/merge itself), closing the gap
+  disclosed since the first release - unlike its retired predecessor, this package never rebuilt
+  itself automatically. `--command` is configurable rather than hardcoded to a bare `php artisan`
+  call, since a real host application may run entirely inside Docker. Never overwrites an existing
+  hook wholesale - the installed block is uniquely marked and only that block is touched on
+  reinstall. See SPEC.md section 1.16.
+
+## [0.2.0] - 2026-09-08
+
+### Added
+
 - `mapin:misses`: tracks every query the graph answered with `found: false` (never a merely-empty
   result on a real node - see SPEC.md section 1.15 for how that distinction is preserved) in a new
   local `query_misses` table (schema bump to version 3), and exports what hasn't been exported yet
   to a JSONL file inside the *host* project (default `docs/mapin-misses.jsonl`) so a team can review
   real gaps together. Purely local start to finish - no network call, ever; see SPEC.md section 13
   point 7.
+
+## [0.1.1] - 2026-09-08
 
 ### Fixed
 
@@ -84,5 +98,7 @@ explicit `axios.get`/`axios.post` verb in favor of guessing from the URL alone; 
 own CI, which had never actually been run against real GitHub infrastructure until this release
 was being prepared, and needed three separate real fixes once it was.
 
-[Unreleased]: https://github.com/Nexvia-Solutions/mapin/compare/v0.1.0...main
+[Unreleased]: https://github.com/Nexvia-Solutions/mapin/compare/v0.2.0...main
+[0.2.0]: https://github.com/Nexvia-Solutions/mapin/compare/v0.1.1...v0.2.0
+[0.1.1]: https://github.com/Nexvia-Solutions/mapin/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Nexvia-Solutions/mapin/releases/tag/v0.1.0

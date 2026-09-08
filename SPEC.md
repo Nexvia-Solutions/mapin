@@ -303,7 +303,19 @@ Built at Brandon's explicit request, after v0.1.1 shipped: he wants every sessio
 
 ---
 
-## 2. Architecture
+### 1.16 Automatic rebuild via git hooks (built 2026-09-08, closing a gap disclosed since phase 8)
+
+Built at Brandon's explicit request ("avancemos con el hook"), closing the gap every phase since release has disclosed plainly: unlike graphify, this package never rebuilt itself automatically. graphify's own history (retired predecessor, section 13's own reasoning) is the direct precedent and the direct reason this is a *local*, per-developer hook rather than a shared one: graphify originally ran via a git hook too, until it started saturating a *shared* server's CPU and had to move to a post-deploy hook instead. That risk doesn't apply here - this package has no shared graph to begin with (`graph.sqlite` is local and gitignored per developer, SPEC.md section 13 point 2), so each developer's own git hook only ever spends their own machine's own resources, on their own graph.
+
+**`mapin:install-hooks`** writes a `post-commit` and a `post-merge` hook that run `mapin:build` in the background (`(cd "$(git rev-parse --show-toplevel)" && <command> > /dev/null 2>&1 &)`) - backgrounded on purpose, so a commit or merge is never blocked waiting for a rebuild, even though the common case (an incremental build touching a handful of files) is already fast enough not to need that. `--command` is deliberately not hardcoded to `php artisan mapin:build`: a real host application may run entirely inside Docker (this project's own real verification target does), where the actual command is `docker exec <container> php artisan mapin:build` - assuming a bare host PHP would have been wrong for the one real application this was tested against.
+
+**Two real design questions, resolved by reading how git itself behaves rather than assuming:**
+1. **Never overwrite an existing hook wholesale.** A project may already have its own `post-commit`/`post-merge` for something unrelated. The installed block is wrapped in a unique marker comment (`# mapin:auto-build ... # mapin:auto-build end`) and only *that* block is replaced on reinstall (a `preg_replace` scoped to the markers) - everything else in the file, before or after, survives untouched. Confirmed with a dedicated test that plants a fake hook with unrelated content first.
+2. **Where the git hooks directory actually is.** Not assumed to be `<base_path>/.git/hooks` - resolved via `git rev-parse --git-dir` run from `base_path()`, the same command git itself uses, so a project with a relocated or worktree-style `.git` still resolves correctly.
+
+**Verification.** 5 new tests in `InstallHooksCommandTest.php`: hooks are created, executable, and contain both the marker and the exact `--command` given; running the install twice does not duplicate the block; an existing hook's own unrelated content survives a (re)install; reinstalling with a *different* `--command` replaces only mapin's own block, not content added around it; and a genuine non-repository fails with exit 1. That last test needed a real standalone temp directory rather than just deleting `.git` from Testbench's own skeleton app - that skeleton lives inside this package's own `vendor/`, itself inside this package's own real git repository, so git found the real repo by walking up the directory tree exactly as git is supposed to, the same way it would for any file genuinely nested inside a real project's repo. Not a bug in the command; a reminder that "delete the marker of the thing I'm testing" and "genuinely isolate the test" are not always the same action. 106 tests total, PHPStan level 6 and Pint clean.
+
+**Real-application verification**, deliberately without leaving a throwaway commit in the real application's own history: hooks were installed for real (`--command="docker exec vendor-app-dev php artisan mapin:build"`, since the real target runs entirely inside Docker), a real file was touched, and the installed `post-commit` script was run directly (`sh .git/hooks/post-commit`) - the same thing git itself runs after a real commit, without needing to create one. It returned immediately (backgrounded, confirmed non-blocking) and the graph updated itself within a few seconds, confirmed by `mapin:stats`'s own `last_build.finished_at` moving forward with no command run by hand. The touched file was reverted, `vendor/` was restored to its normal Composer-managed state, and the hooks themselves were left installed in the real repository, since that is the actual point of this feature - the first hook is now the same one Brandon works under day to day, not a demo.
 
 Pipeline, run by `mapin:build`:
 
@@ -607,12 +619,13 @@ php artisan mapin:export       [--format=json|dot|mermaid] [--out=]
 php artisan mapin:mcp                                                   # stdio MCP server
 php artisan mapin:doctor                                                # dependencies, boot, staleness, unresolved ratio
 php artisan mapin:misses       [--output=docs/mapin-misses.jsonl]       # export found:false queries to a host-project JSONL file
+php artisan mapin:install-hooks [--command="php artisan mapin:build"]   # install post-commit/post-merge hooks that rebuild in the background
 php artisan mapin:clear
 ```
 
 Every command supports `--json` for machine consumption. Exit code 1 on build errors, 2 on staleness warnings when `--strict` is passed (for CI).
 
-Recommended git hook for host projects (documented, not installed automatically): `post-commit` running `mapin:build --json > /dev/null`.
+`mapin:install-hooks` (section 1.16) installs `post-commit`/`post-merge` hooks that rebuild in the background - opt-in, not run automatically by anything else in this package.
 
 ---
 

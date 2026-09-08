@@ -89,6 +89,15 @@ Todos los comandos soportan `--json`. Toda respuesta lleva un bloque `graph` que
 desactualizada podría estar (el commit contra el que se construyó el grafo, y cuántos archivos
 cambiaron desde entonces) - nunca una suposición silenciosa sobre qué tan vigente es la respuesta.
 
+Mantener el grafo al día es opcional, no automático - corré esto una vez por checkout para
+reconstruirlo en segundo plano después de cada commit y merge:
+
+```bash
+php artisan mapin:install-hooks
+# ¿corre detrás de Docker en vez de PHP directo en el host?
+php artisan mapin:install-hooks --command="docker exec <container> php artisan mapin:build"
+```
+
 ## Usalo desde Claude Code, Cursor, o cualquier cliente MCP
 
 ```bash

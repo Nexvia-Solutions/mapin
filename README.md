@@ -85,6 +85,15 @@ Every command supports `--json`. Every answer carries a `graph` block reporting 
 be (the commit the graph was built from, and how many files changed since) - never a silent guess
 about how current the answer is.
 
+Keeping the graph current is opt-in, not automatic - run this once per checkout to rebuild it in
+the background after every commit and merge:
+
+```bash
+php artisan mapin:install-hooks
+# behind Docker instead of a bare host PHP?
+php artisan mapin:install-hooks --command="docker exec <container> php artisan mapin:build"
+```
+
 ## Use it from Claude Code, Cursor, or any MCP client
 
 ```bash
