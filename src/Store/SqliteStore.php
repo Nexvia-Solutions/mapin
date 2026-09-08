@@ -492,7 +492,22 @@ final class SqliteStore
         ];
     }
 
-    /** @return array<string,mixed>[] */
+    /**
+     * Ordering, not just filtering, has to know about an exact short-name hit - Query::find()'s own
+     * exactMatches() can only rank what LIMIT lets through, and on a real application a common short
+     * class name (e.g. "ServiceOrder") can share the `%name%` LIKE with a couple hundred other
+     * nodes - other classes it's a substring of, their methods, their files, their routes, their
+     * doc mentions. The old ORDER BY only ever compared the search term against the node's full
+     * key ("class:App\Models\ServiceOrder" never equals "ServiceOrder"), which is a no-op for every
+     * short-name search - the single most common way this method is actually called (SPEC.md
+     * section 6.1: "FQCN or short class name") - so which 25 of 226 matches SQLite happened to
+     * return, in whatever order rows physically sit in, decided whether exactMatches() ever got the
+     * chance to see the real hit at all. Found 2026-09-08 from real usage: mapin:find "ServiceOrder"
+     * reported not found while the exact node existed, confirmed by fetching the same 226-row match
+     * set directly and finding the real node nowhere in the first 25.
+     *
+     * @return array<string,mixed>[]
+     */
     public function findNodes(string $name, ?NodeType $type = null): array
     {
         $sql = 'SELECT nodes.*, files.path AS file_path FROM nodes LEFT JOIN files ON files.id = nodes.file_id
@@ -502,8 +517,13 @@ final class SqliteStore
             $sql .= ' AND nodes.type = :type';
             $params['type'] = $type->value;
         }
-        $sql .= ' ORDER BY (nodes.key = :exact2) DESC LIMIT 25';
+        $sql .= ' ORDER BY (nodes.key = :exact2) DESC, (nodes.name = :name2) DESC, (nodes.name LIKE :suffix) DESC LIMIT 25';
         $params['exact2'] = $name;
+        $params['name2'] = $name;
+        // Same rule exactMatches() applies in PHP (the segment after the last backslash), mirrored
+        // here in SQL so a genuine short-name hit survives the LIMIT instead of only being counted
+        // if it happened to already be in the top 25 for some other reason.
+        $params['suffix'] = '%\\'.$name;
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute($params);
 

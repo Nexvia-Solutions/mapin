@@ -60,6 +60,18 @@ final class ClassMeta
             'props' => $this->props,
             'facade_methods' => $this->facadeMethods,
             'table_override' => $this->tableOverride,
+            // Vendor/external classes only (never project - PhpExtractor::buildClass() already
+            // gives every project method its own `method:` node, which hydrateIndex() rebuilds
+            // ->methods from; duplicating that here would just be dead weight). This is the ONLY
+            // place a vendor class's own methods survive an incremental build that doesn't
+            // re-parse it: without it, hydrateIndex() has no `method:` nodes to rebuild a vendor
+            // class's methods from (there never were any), so ->methods silently comes back empty
+            // and every call chain through that class degrades to unresolved - not because the
+            // type was ever unknown, but because it was known once and then deliberately dropped
+            // with no way to get it back short of a --full. Found 2026-09-08: a real chain
+            // (redirect()->back()->withInput()) resolved perfectly on a fresh --full and broke on
+            // the very next incremental build that didn't touch Illuminate\Routing\Redirector.
+            'methods' => $this->project ? [] : $this->methods,
         ];
     }
 
@@ -72,6 +84,7 @@ final class ClassMeta
         $class->props = $meta['props'] ?? [];
         $class->facadeMethods = $meta['facade_methods'] ?? [];
         $class->tableOverride = $meta['table_override'] ?? null;
+        $class->methods = $meta['methods'] ?? [];
 
         return $class;
     }

@@ -42,9 +42,16 @@ final class DoctorCommand extends Command
 
             $envelope = $query->envelope('stats', [], $result);
             $graph = $envelope['graph'];
+            // built_commit is a 12-char prefix (BuildRunner::currentCommit()); head_commit is the
+            // full 40-char SHA (GitStatus::headCommit(), a real `git rev-parse HEAD`). A plain !==
+            // between the two can never be equal even for the exact same commit, which made this
+            // check report stale on every single graph, right after a fresh build with zero files
+            // changed - found 2026-09-08 from real use. A short hash is always a strict prefix of
+            // its own full hash, so str_starts_with is the correct comparison regardless of which
+            // length built_commit happens to be.
             $stale = $graph['built_commit'] !== null
                 && $graph['head_commit'] !== null
-                && $graph['built_commit'] !== $graph['head_commit'];
+                && ! str_starts_with($graph['head_commit'], $graph['built_commit']);
             $checks['graph_staleness'] = [
                 'ok' => ! $stale,
                 'detail' => $stale

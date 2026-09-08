@@ -15,6 +15,45 @@ All notable changes to this project are documented here. Format loosely follows
   hook wholesale - the installed block is uniquely marked and only that block is touched on
   reinstall. See SPEC.md section 1.16.
 
+### Fixed
+
+- A vendor (non-project) class's own methods - and their return types - were extracted correctly
+  but never persisted to `nodes.meta`, and the only mechanism that could rebuild them on an
+  incremental build (per-method `method:` nodes) has only ever existed for project classes. In
+  practice: after a project's first `--full`, every incremental build silently resolved chained
+  calls through vendor code (`redirect()->back()->withInput()`, or any similar chain through any
+  vendor method) a little worse than the one before, with no file of the caller's own needing to
+  change. Found auditing unresolved calls against a real application - `redirect()`/`back()` alone
+  accounted for 3.4% of them. Fixed by persisting a vendor class's own methods (only vendor -
+  project classes already get this back for free from their `method:` nodes, so this avoids
+  duplicating it there). See SPEC.md section 1.17.
+
+- `SqliteStore::findNodes()`'s own `ORDER BY` compared a short-name search (e.g. `"ServiceOrder"`)
+  against a node's full `key` (`"class:App\Models\ServiceOrder"`), which can never match - a
+  silent no-op for the single most common way `find()` is actually called. On a real application
+  with hundreds of nodes sharing a common substring, the exact node could land outside the
+  `LIMIT 25` cut before `Query::exactMatches()` (itself correct) ever got a chance to see it.
+  Reported from real use: `mapin:find "ServiceOrder"` answered not-found for a plain Eloquent
+  model that genuinely existed, with the graph fully up to date. Fixed by adding two more ranking
+  terms mirroring the same rules `exactMatches()` already applies in PHP. See SPEC.md section 1.18.
+
+- `mapin:mcp` never completed a handshake with a classic MCP client (Claude Code's included, per a
+  real report) - `laravel/mcp` v1.0.0-beta.1 dropped the `initialize` method entirely in favor of
+  MCP 2026-07-28's per-request `_meta.protocolVersion`, an upstream, deliberate BC break
+  (github.com/laravel/mcp pull #296), not a Mapin bug. Fixed entirely inside `MapinServer`: a
+  registered classic `initialize` handler, plus treating `_meta`'s outright absence on any request
+  as the legacy-client signal it actually is, so the rest of a legacy session (`tools/list`,
+  `tools/call`, ...) isn't held to a per-request mechanism that protocol never had. The modern
+  `2026-07-28` path is untouched - still validated exactly as strictly as before. See SPEC.md
+  section 1.19.
+
+- `mapin:doctor`'s `graph_staleness` check reported stale on every graph, including one built the
+  same second the check ran - it compared `built_commit` (a 12-char prefix,
+  `BuildRunner::currentCommit()`) against `head_commit` (the full 40-char SHA,
+  `GitStatus::headCommit()`) with plain `!==`, which can never be equal even for the same commit.
+  Fixed with `str_starts_with()`, correct regardless of which length `built_commit` happens to be.
+  See SPEC.md section 1.20.
+
 ## [0.2.0] - 2026-09-08
 
 ### Added

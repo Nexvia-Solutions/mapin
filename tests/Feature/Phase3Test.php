@@ -7,6 +7,7 @@ use Fixture\Http\Controllers\BookController;
 use Fixture\Http\Controllers\DashboardController;
 use Fixture\Services\StandardPricingEngine;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Testing\Fluent\AssertableJson;
 use Mapin\Mcp\Adapters\FindToolAdapter;
@@ -114,4 +115,28 @@ it('reports a clean bill of health via mapin:doctor after a build', function () 
 
     expect($result['checks']['graph_exists']['ok'])->toBeTrue();
     expect($result['checks']['last_build']['ok'])->toBeTrue();
+});
+
+it('mapin:doctor reports graph_staleness ok right after a fresh build, in a real git repo', function () {
+    // base_path() here has no .git of its own by default (confirmed in InstallHooksCommandTest),
+    // so built_commit/head_commit both come back null and this check never actually compares two
+    // real hashes without a real repo on top of it - same setup/teardown InstallHooksCommandTest
+    // already established, scoped to just this one test rather than the whole file's shared
+    // beforeEach, since every other test here relies on base_path() NOT being a git repo.
+    shell_exec('cd '.escapeshellarg(base_path()).' && git init -q && git config user.email test@example.com && git config user.name Test && git commit -q --allow-empty -m init');
+
+    try {
+        Artisan::call('mapin:build', ['--full' => true]);
+        Artisan::call('mapin:doctor', ['--json' => true]);
+        $result = json_decode(Artisan::output(), true);
+
+        // Regression: built_commit (BuildRunner::currentCommit(), a 12-char prefix) and
+        // head_commit (GitStatus::headCommit(), the full 40-char SHA) compared with a plain !==
+        // can never be equal for the same commit - this reported stale on every graph, right
+        // after the freshest possible build. See SPEC.md section 1.20.
+        expect($result['checks']['graph_staleness']['ok'])->toBeTrue()
+            ->and($result['checks']['graph_staleness']['detail'])->toBe('current');
+    } finally {
+        File::deleteDirectory(base_path('.git'));
+    }
 });

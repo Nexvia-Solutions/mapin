@@ -73,6 +73,43 @@ it('insertEdges still collapses a genuine duplicate edge (same file and line, bo
         ->and($real)->toBe(1);
 });
 
+it('findNodes surfaces an exact short-name match even when 25+ other nodes share the same substring', function () {
+    // Regression for a real bug (found 2026-09-08 via mapin:find "ServiceOrder" against a real
+    // application's graph: found: false for a model that genuinely exists). The old ORDER BY only
+    // compared the search term against a node's full `key` ("class:App\Models\ServiceOrder" is
+    // never equal to "ServiceOrder"), so it was a no-op for the single most common way this method
+    // is called - searching by short name. With 226 real nodes matching `LIKE '%ServiceOrder%'`
+    // (other classes it's a substring of, their methods, files, doc mentions), whichever 25 SQLite
+    // happened to return first never had to include the real node, and Query::exactMatches() never
+    // got a chance to see it - correct in itself, but only as good as what findNodes() hands it.
+    $store = sqliteStoreTestStore();
+
+    $decoys = [];
+    for ($i = 0; $i < 30; $i++) {
+        // Every decoy contains "ServiceOrder" as a substring (matching the LIKE clause) but none
+        // is an exact key or short-name match - the same shape as ServiceOrderController,
+        // ServiceOrderRepository, method:App\Models\ServiceOrder::save, etc. in the real graph.
+        $decoys[] = new Node(NodeType::ClassLike, "App\\Models\\ServiceOrder{$i}", "class:App\\Models\\ServiceOrder{$i}");
+    }
+    $store->upsertNodes($decoys, null);
+
+    // Inserted last, so it has the highest rowid - it would be the first one dropped by a plain
+    // `LIMIT 25` over insertion order, exactly the failure mode this fix targets.
+    $store->upsertNodes([
+        new Node(NodeType::ClassLike, 'App\Models\ServiceOrder', 'class:App\Models\ServiceOrder'),
+    ], null);
+
+    // No type filter, matching how Query::find() calls this in the common case (mapin:find without
+    // --type): with a type filter, SQLite can walk the nodes_type(type, name) index in name order,
+    // which happens to put the exact-length "ServiceOrder" before the "ServiceOrder0".."29" decoys
+    // and would mask the bug. Real unresolved searches mix multiple node types, so no type filter
+    // is the realistic case - and the one the original report actually hit.
+    $results = $store->findNodes('ServiceOrder');
+
+    $keys = array_column($results, 'key');
+    expect($keys)->toContain('class:App\Models\ServiceOrder');
+});
+
 it('recordQueryMiss writes one row, JSON-encoding args and suggestions', function () {
     $store = sqliteStoreTestStore();
 

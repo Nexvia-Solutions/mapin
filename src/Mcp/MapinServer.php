@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Mapin\Mcp;
 
 use Laravel\Mcp\Server;
+use Laravel\Mcp\Server\ServerContext;
 use Laravel\Mcp\Server\Tool;
+use Laravel\Mcp\Transport\JsonRpcRequest;
 use Mapin\Mcp\Adapters\CalleesToolAdapter;
 use Mapin\Mcp\Adapters\CallersToolAdapter;
 use Mapin\Mcp\Adapters\CommunitiesToolAdapter;
@@ -20,6 +22,7 @@ use Mapin\Mcp\Adapters\RouteToolAdapter;
 use Mapin\Mcp\Adapters\StatsToolAdapter;
 use Mapin\Mcp\Adapters\UnresolvedToolAdapter;
 use Mapin\Mcp\Adapters\ViewToolAdapter;
+use Mapin\Mcp\Methods\LegacyInitialize;
 
 final class MapinServer extends Server
 {
@@ -50,4 +53,26 @@ final class MapinServer extends Server
         HubsToolAdapter::class,
         CommunitiesToolAdapter::class,
     ];
+
+    protected function boot(): void
+    {
+        $this->addMethod('initialize', LegacyInitialize::class);
+    }
+
+    /**
+     * The base class demands `_meta.protocolVersion` on every request, the mechanism MCP
+     * 2026-07-28 introduced to replace per-session negotiation - a classic client (SPEC.md section
+     * 1.19) never sends it, not just on `initialize` but on every request for the rest of that
+     * session, since it negotiated the protocol version once, up front, and expects that to stick.
+     * `_meta`'s absence is itself the signal: a 2026-07-28-aware client always sends it, so a
+     * request with none is unambiguously a legacy client, not a session to track state for.
+     */
+    protected function validateProtocolMeta(JsonRpcRequest $request, ServerContext $context): void
+    {
+        if ($request->meta() === null) {
+            return;
+        }
+
+        parent::validateProtocolMeta($request, $context);
+    }
 }
