@@ -514,6 +514,11 @@ final class Query
         $graph = $this->graphBlock();
 
         if (! $result->found) {
+            // Purely local (query_misses lives in this project's own graph.sqlite, same as every
+            // other table) - never sent anywhere on its own. `mapin:misses` (SPEC.md section 13)
+            // is the only thing that ever reads this, and only when a human runs it explicitly.
+            $this->store->recordQueryMiss($tool, $args, $result->suggestions);
+
             return [
                 'found' => false,
                 'query' => ['tool' => $tool, ...$args],

@@ -13,6 +13,7 @@ use Mapin\Console\Commands\DoctorCommand;
 use Mapin\Console\Commands\FindCommand;
 use Mapin\Console\Commands\ImpactCommand;
 use Mapin\Console\Commands\McpCommand;
+use Mapin\Console\Commands\MissesCommand;
 use Mapin\Console\Commands\ModelCommand;
 use Mapin\Console\Commands\QueryCommand;
 use Mapin\Console\Commands\RouteCommand;
@@ -62,6 +63,7 @@ final class MapinServiceProvider extends ServiceProvider
             DoctorCommand::class,
             DocsCommand::class,
             CommunitiesCommand::class,
+            MissesCommand::class,
         ]);
     }
 }

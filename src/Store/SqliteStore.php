@@ -389,6 +389,41 @@ final class SqliteStore
     }
 
     /**
+     * Called once from Query::envelope() for every answer with found: false - never for a query
+     * whose result is merely an empty list. Purely local: this only ever writes to this project's
+     * own graph.sqlite, exactly like every other write in this class.
+     *
+     * @param  array<string,mixed>  $args
+     * @param  array<int, array{key: string, score: float}>  $suggestions
+     */
+    public function recordQueryMiss(string $tool, array $args, array $suggestions): void
+    {
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO query_misses (tool, args, suggestions, occurred_at) VALUES (?, ?, ?, ?)',
+        );
+        $stmt->execute([$tool, $args === [] ? null : json_encode($args), $suggestions === [] ? null : json_encode($suggestions), gmdate('c')]);
+    }
+
+    /** @return array<int,array{id:int,tool:string,args:?string,suggestions:?string,occurred_at:string}> */
+    public function unexportedQueryMisses(): array
+    {
+        $stmt = $this->pdo->query('SELECT id, tool, args, suggestions, occurred_at FROM query_misses WHERE exported_at IS NULL ORDER BY id');
+
+        return $stmt !== false ? $stmt->fetchAll(\PDO::FETCH_ASSOC) : [];
+    }
+
+    /** @param  int[]  $ids */
+    public function markQueryMissesExported(array $ids, string $exportedAt): void
+    {
+        if ($ids === []) {
+            return;
+        }
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $this->pdo->prepare("UPDATE query_misses SET exported_at = ? WHERE id IN ($placeholders)")
+            ->execute([$exportedAt, ...$ids]);
+    }
+
+    /**
      * Route and middleware nodes/edges are not owned by one file (routes come from the booted
      * router as a whole, SPEC.md 4), so incremental hash-diffing does not apply to them: every
      * booted build re-extracts the complete route table and this clears the previous one first,

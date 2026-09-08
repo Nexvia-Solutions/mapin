@@ -5,6 +5,15 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- `mapin:misses`: tracks every query the graph answered with `found: false` (never a merely-empty
+  result on a real node - see SPEC.md section 1.15 for how that distinction is preserved) in a new
+  local `query_misses` table (schema bump to version 3), and exports what hasn't been exported yet
+  to a JSONL file inside the *host* project (default `docs/mapin-misses.jsonl`) so a team can review
+  real gaps together. Purely local start to finish - no network call, ever; see SPEC.md section 13
+  point 7.
+
 ### Fixed
 
 - `mapin:build`'s own reported node/edge counts (and what it records into `builds`) could

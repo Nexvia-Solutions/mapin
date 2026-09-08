@@ -113,6 +113,9 @@ uses - an MCP answer and a `mapin:query` answer to the same question never diver
 - **Semantic docs** (opt-in, `mapin:docs --with-llm`): concepts and relations between them,
   extracted from Markdown section text only - never PHP source, and never without the flag. Local
   by default (`NullClient`); one provider driver ships (Ollama).
+- **Query misses** (`mapin:misses`): every query that came back `found: false` gets tracked
+  locally, exportable to a JSONL file inside your own project so a team can review real gaps
+  together. Purely local - no network call, ever, for any installation.
 
 Every query tool is listed in [docs/MCP.md](docs/MCP.md); the full behavioral contract, every node
 and edge type, and the reasoning behind each design decision live in [SPEC.md](SPEC.md).

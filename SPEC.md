@@ -285,6 +285,24 @@ With both applied, the full quick-start pipeline was run for real against each f
 
 ---
 
+### 1.15 Query misses tracking (built 2026-09-08, post-release)
+
+Built at Brandon's explicit request, after v0.1.1 shipped: he wants every session that queries the graph and comes up empty to leave a trace, so he and Lauti can periodically review what the graph couldn't answer and close real gaps in the extractor - not something either of them has to remember to write down by hand.
+
+**`query_misses`** (section 5), a new table bumping schema to version 3. `Query::envelope()` (section 6) writes one row here on every `found: false` answer - the one place CLI and MCP already converge, so this covers all 14 tools without touching any of them individually. Getting the semantics right meant reading `Query.php` closely first, not assuming a uniform rule: a `found: false` in this codebase specifically means the *node/key/route being searched for* does not exist - `callers`/`callees`/`impact`/`docs`/`hubs`/`unresolved`/`stats` all treat an empty result on a real node as `found: true` (SPEC.md's own "never answer with an approximate match" discipline already required this distinction to exist; this feature only had to respect it, not invent it), and `path()` treats "both nodes exist, no route within `max_depth`" the same way. None of those legitimate empty results write a row here - confirmed by a dedicated test asserting a real method with zero real callers produces zero misses.
+
+**`mapin:misses`** (section 9), the one deliberate exception to section 13's "never write outside `storage/`" - and only when a human runs it. Exports every unexported row to a JSONL file inside the *host* project (default `docs/mapin-misses.jsonl`), one line per miss, then marks those rows exported (`exported_at`) so a second run reports zero and never duplicates a line. This is also why the file lives in the host project's own repo, never inside this package's own `vendor/` directory: multiple teammates across different machines need to write to the *same* file and commit it together, which only works if it is versioned in *their* repository, not shipped as part of this one.
+
+**The privacy question this raised, and how it's answered for good, not just for now.** Brandon asked directly, before any of this was built: if the capture mechanism lived inside this package's own code, would a third party who installs Mapin end up reporting their own project's route names and gaps back to us? The answer had to be an unambiguous no, and section 13 point 7 now says so as a first-class boundary, not an afterthought: `query_misses` never leaves the *local* `graph.sqlite` on its own, `mapin:misses` never makes a network call, and it only ever writes into the project that is running it - there is no path in this feature, today or by design, for one installation's misses to reach another party.
+
+**Verification.** 5 new tests (2 unit, store-level, in `SqliteStoreTest.php` - recording a miss round-trips its JSON correctly, and `markQueryMissesExported` scopes to exact ids rather than a point in time; 3 feature, in the new `QueryMissesTest.php` - the empty-result-is-not-a-miss distinction above, `mapin:misses` exporting then reporting nothing new, and a second batch appending rather than overwriting). 101 tests total, PHPStan level 6 and Pint clean.
+
+**Real-application verification**, same discipline as every other phase: schema bump against the real application forced the full rebuild the schema change always promises (292s, 25,754 nodes and 74,432 edges - both figures still matching `SqliteStore::counts()` exactly, confirming the 1.14 count-accuracy fix holds under this change too), then two real misses generated on purpose (`mapin:find` and `mapin:route` against names invented not to exist), exported for real to `docs/mapin-misses.jsonl` inside the real application's own repository, and a second `mapin:misses` run confirmed idempotent (`exported: 0`, file unchanged at 2 lines). The test file was deleted afterward and the real application's own `vendor/` restored to its normal Composer-managed state - nothing under this verification was left behind.
+
+**Not yet done, tracked rather than skipped:** no size cap or rotation on `query_misses` or the exported JSONL - left as an open question for whenever it becomes a real problem, not solved speculatively. No configuration to disable the capture (SPEC.md's own "don't design for hypothetical future requirements" - nothing has asked for an opt-out yet, and the mechanism is purely local and low-cost by construction).
+
+---
+
 ## 2. Architecture
 
 Pipeline, run by `mapin:build`:
@@ -481,6 +499,7 @@ CREATE TABLE builds    (id INTEGER PRIMARY KEY, started_at TEXT, finished_at TEX
                         files_seen INTEGER, files_changed INTEGER, files_affected INTEGER, nodes INTEGER, edges INTEGER,
                         unresolved INTEGER, warnings TEXT);
 CREATE TABLE symbol_deps(file_id INTEGER, symbol TEXT, PRIMARY KEY (file_id, symbol));
+CREATE TABLE query_misses(id INTEGER PRIMARY KEY, tool TEXT, args TEXT, suggestions TEXT, occurred_at TEXT, exported_at TEXT);
 CREATE VIRTUAL TABLE nodes_fts USING fts5(name, key, content='nodes', content_rowid='id');
 CREATE INDEX edges_from ON edges(from_id, type);
 CREATE INDEX edges_to   ON edges(to_id, type);
@@ -495,6 +514,8 @@ A schema version bump drops and recreates every table (`Schema::reset()`) before
 Deleted files cascade (their nodes, edges, unresolved rows and `symbol_deps` entries are removed via `ON DELETE CASCADE` when the `files` row is deleted).
 
 `mapin:export` writes `graph.json` (nodes, edges, meta) or DOT or Mermaid for other tools. The JSON is an export, never the source of truth.
+
+**`query_misses` (built 2026-09-08, at Brandon's request).** `Query::envelope()` writes one row here every time it answers `found: false` - never for a query whose result is merely an empty list, which stays `found: true` (see section 6's own `found`/`notFound` split). Purely local, same as every other table; `mapin:misses` (section 9, section 13 point 7) is the only thing that ever reads it, and only when a human runs the command on purpose. `exported_at` (NULL until exported) is what makes repeated runs of that command idempotent - a row only leaves once.
 
 ---
 
@@ -585,6 +606,7 @@ php artisan mapin:docs         [--with-llm]
 php artisan mapin:export       [--format=json|dot|mermaid] [--out=]
 php artisan mapin:mcp                                                   # stdio MCP server
 php artisan mapin:doctor                                                # dependencies, boot, staleness, unresolved ratio
+php artisan mapin:misses       [--output=docs/mapin-misses.jsonl]       # export found:false queries to a host-project JSONL file
 php artisan mapin:clear
 ```
 
@@ -688,11 +710,12 @@ mapin/
 ### Never
 
 1. **Never send code to an LLM without an explicit flag.** Extraction is local. Only the optional semantic Markdown layer calls a provider, only with `--with-llm`, and only with Markdown section text, never PHP source. Reason: the package runs inside third-party proprietary codebases; a silent upload is a security incident and destroys trust.
-2. **Never write outside the configured storage directory** (default `storage/mapin/`). No files in the project root, no edits to `.gitignore`. Reason: a tool that pollutes the host working tree produces stale duplicate graphs and untracked noise, which is exactly what went wrong with the previous tool.
+2. **Never write outside the configured storage directory** (default `storage/mapin/`). No files in the project root, no edits to `.gitignore`. Reason: a tool that pollutes the host working tree produces stale duplicate graphs and untracked noise, which is exactly what went wrong with the previous tool. **One deliberate exception:** `mapin:misses`, and only when a human runs it - see point 7.
 3. **Never execute the host application's business logic.** Booting the kernel to read the router and the container is allowed. Dispatching requests, running jobs, running commands, or executing a single Eloquent query against the host database is not. `--no-boot` disables booting entirely. Reason: the tool may run against production-like databases.
 4. **Never include data from any real project or tenant in the repository.** Fixtures are invented. Benchmarks are published as aggregate numbers. Reason: public repository; internal names and URLs are a leak and make the tool look bespoke.
 5. **Never answer with an approximate match without saying so.** Reason: the previous tool returned look-alike nodes with full confidence and callers acted on them.
 6. **Never leave a stale graph silently.** Every build writes a report, a shrinking graph is a warning not a refusal, and every response carries the build commit. Reason: silent refusals to overwrite left graphs several commits behind without anyone noticing.
+7. **Never phone home, under any circumstance, for any installation.** `Query::envelope()` records every `found: false` answer to `query_misses`, a table in this project's own `graph.sqlite` - purely local, exactly like every other table. `mapin:misses` (the one exception to point 2) only ever reads that local table and writes a JSONL file inside the *host* project, never inside this package's own `vendor/` directory, and only when a human runs the command on purpose - never during `mapin:build`, never during any query. No part of this package makes a network call outside `--with-llm` (point 1). Reason: this package is published to anyone on Packagist; a third party's own private code names, routes or gaps must never reach us, on purpose or by a design mistake.
 
 ---
 

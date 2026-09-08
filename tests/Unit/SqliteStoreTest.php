@@ -72,3 +72,38 @@ it('insertEdges still collapses a genuine duplicate edge (same file and line, bo
     expect($reported)->toBe($real)
         ->and($real)->toBe(1);
 });
+
+it('recordQueryMiss writes one row, JSON-encoding args and suggestions', function () {
+    $store = sqliteStoreTestStore();
+
+    $store->recordQueryMiss('find', ['name' => 'Whatever', 'fuzzy' => false], [
+        ['key' => 'class:App\Whatevs', 'score' => 0.8],
+    ]);
+
+    $rows = $store->unexportedQueryMisses();
+    expect($rows)->toHaveCount(1);
+    expect($rows[0]['tool'])->toBe('find');
+    expect(json_decode((string) $rows[0]['args'], true))->toBe(['name' => 'Whatever', 'fuzzy' => false]);
+    expect(json_decode((string) $rows[0]['suggestions'], true))->toBe([['key' => 'class:App\Whatevs', 'score' => 0.8]]);
+    expect($rows[0]['occurred_at'])->toBeString();
+});
+
+it('unexportedQueryMisses only returns rows markQueryMissesExported has not already covered', function () {
+    $store = sqliteStoreTestStore();
+    $store->recordQueryMiss('find', ['name' => 'A'], []);
+    $store->recordQueryMiss('route', ['name' => 'B'], []);
+
+    $firstBatch = $store->unexportedQueryMisses();
+    expect($firstBatch)->toHaveCount(2);
+
+    $store->markQueryMissesExported([$firstBatch[0]['id']], gmdate('c'));
+
+    $remaining = $store->unexportedQueryMisses();
+    expect($remaining)->toHaveCount(1)
+        ->and($remaining[0]['id'])->toBe($firstBatch[1]['id']);
+
+    // A third miss recorded after the export still shows up untouched - marking is scoped to the
+    // exact ids passed in, not "everything as of some point in time".
+    $store->recordQueryMiss('view', ['name' => 'C'], []);
+    expect($store->unexportedQueryMisses())->toHaveCount(2);
+});

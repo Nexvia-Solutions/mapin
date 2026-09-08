@@ -11,7 +11,7 @@ namespace Mapin\Store;
  */
 final class Schema
 {
-    public const CURRENT_VERSION = 2;
+    public const CURRENT_VERSION = 3;
 
     public const STATEMENTS = [
         'CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)',
@@ -85,9 +85,23 @@ final class Schema
         'CREATE INDEX IF NOT EXISTS edges_to ON edges(to_id, type)',
         'CREATE INDEX IF NOT EXISTS nodes_type ON nodes(type, name)',
         'CREATE INDEX IF NOT EXISTS nodes_file ON nodes(file_id)',
+        // One row per query that Query::envelope() answered with found: false - never for a query
+        // whose result is merely an empty list (callers/impact/etc. on a real node with zero results
+        // is still found: true, see Query.php's own found()/notFound() split). Purely local and never
+        // sent anywhere on its own - only `mapin:misses` (SPEC.md section 13's one deliberate
+        // exception to "never write outside storage/") reads this, and only when a human runs it.
+        'CREATE TABLE IF NOT EXISTS query_misses (
+            id INTEGER PRIMARY KEY,
+            tool TEXT NOT NULL,
+            args TEXT,
+            suggestions TEXT,
+            occurred_at TEXT NOT NULL,
+            exported_at TEXT
+        )',
+        'CREATE INDEX IF NOT EXISTS query_misses_exported ON query_misses(exported_at)',
     ];
 
-    private const TABLES = ['symbol_deps', 'unresolved', 'edges', 'nodes', 'files', 'builds', 'meta'];
+    private const TABLES = ['symbol_deps', 'unresolved', 'edges', 'nodes', 'files', 'builds', 'meta', 'query_misses'];
 
     public static function install(\PDO $pdo): void
     {

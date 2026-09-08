@@ -118,6 +118,10 @@ para una aplicación en containers).
 - **Documentación semántica** (opcional, `mapin:docs --with-llm`): conceptos y relaciones entre
   ellos, extraídos solo del texto de las secciones Markdown - nunca del código PHP, y nunca sin el
   flag. Local por defecto (`NullClient`); viene un driver de proveedor (Ollama).
+- **Consultas sin respuesta** (`mapin:misses`): cada consulta que devolvió `found: false` queda
+  registrada localmente, exportable a un archivo JSONL dentro de tu propio proyecto para que un
+  equipo revise juntos los gaps reales. Puramente local - nunca una llamada de red, para ninguna
+  instalación.
 
 Cada tool de consulta está listada en [docs/MCP.md](docs/MCP.md); el contrato de comportamiento
 completo, cada tipo de nodo y edge, y el razonamiento detrás de cada decisión de diseño viven en
