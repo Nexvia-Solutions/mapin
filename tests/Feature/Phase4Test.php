@@ -38,16 +38,8 @@ afterEach(function () {
     mapinCleanupPhase2Fixtures($this->app);
 });
 
-function mapinEdgeExists(SqliteStore $store, string $type, string $fromKey, string $toKey): bool
-{
-    $stmt = $store->pdo()->prepare(
-        'SELECT COUNT(*) FROM edges JOIN nodes f ON f.id = edges.from_id JOIN nodes t ON t.id = edges.to_id
-         WHERE edges.type = ? AND f.key = ? AND t.key = ?',
-    );
-    $stmt->execute([$type, $fromKey, $toKey]);
-
-    return ((int) $stmt->fetchColumn()) > 0;
-}
+// mapinEdgeExists() is declared in tests/Pest.php, shared with every later phase's own tests - see
+// the comment there for why (same reasoning as mapinCopyPhase2Fixtures()).
 
 it('creates a doc node per Markdown file and a section node per heading, with GitHub-style anchors', function () {
     $store = new SqliteStore(config('mapin.storage'));

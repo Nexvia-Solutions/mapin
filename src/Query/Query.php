@@ -25,7 +25,7 @@ final class Query
     private const REVERSE_IMPACT_EDGE_TYPES = [
         'calls', 'routes_to', 'renders', 'dispatches', 'schedules', 'listens',
         'observes', 'injects', 'instantiates', 'resolves', 'links_route',
-        'includes', 'uses_component', 'documents',
+        'includes', 'uses_component', 'documents', 'requests',
     ];
 
     public function __construct(
@@ -222,7 +222,7 @@ final class Query
             $frontier = $next;
         }
 
-        $grouped = ['routes' => [], 'views' => [], 'jobs' => [], 'commands' => [], 'methods' => [], 'classes' => [], 'docs' => []];
+        $grouped = ['routes' => [], 'views' => [], 'jobs' => [], 'commands' => [], 'methods' => [], 'classes' => [], 'docs' => [], 'js_files' => []];
         foreach ($found as $item) {
             $bucket = match ($item['type']) {
                 'route' => 'routes',
@@ -231,6 +231,7 @@ final class Query
                 'command' => 'commands',
                 'method' => 'methods',
                 'section' => 'docs',
+                'file' => 'js_files',
                 default => 'classes',
             };
             $grouped[$bucket][] = ['key' => $item['key'], 'name' => $item['name'], 'depth' => $item['depth'], 'via' => $item['via']];

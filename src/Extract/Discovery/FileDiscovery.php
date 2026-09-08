@@ -19,6 +19,10 @@ final class FileDiscovery
         'blade.php' => 'blade',
         'md' => 'md',
         'markdown' => 'md',
+        'js' => 'js',
+        'jsx' => 'js',
+        'ts' => 'js',
+        'tsx' => 'js',
     ];
 
     private const ALWAYS_EXCLUDED_DIRS = [

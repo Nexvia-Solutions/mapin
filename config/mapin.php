@@ -25,7 +25,7 @@ return [
     | queries like impact/callers report against.
     |
     */
-    'paths' => ['app', 'routes', 'config', 'resources/views', 'docs'],
+    'paths' => ['app', 'routes', 'config', 'resources/views', 'resources/js', 'docs'],
 
     /*
     |--------------------------------------------------------------------------

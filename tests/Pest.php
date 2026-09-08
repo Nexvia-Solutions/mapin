@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\File;
+use Mapin\Store\SqliteStore;
 use Mapin\Tests\TestCase;
 
 uses(TestCase::class)->in('Feature');
@@ -39,4 +40,16 @@ function mapinCleanupPhase2Fixtures(Application $app): void
     File::deleteDirectory($app->basePath('resources/views'));
     File::deleteDirectory($app->basePath('docs'));
     @unlink(config('mapin.storage'));
+}
+
+/** Shared by every phase's own edge-existence assertions, for the identical reason mapinCopyPhase2Fixtures() lives here rather than in whichever test file first needed it. */
+function mapinEdgeExists(SqliteStore $store, string $type, string $fromKey, string $toKey): bool
+{
+    $stmt = $store->pdo()->prepare(
+        'SELECT COUNT(*) FROM edges JOIN nodes f ON f.id = edges.from_id JOIN nodes t ON t.id = edges.to_id
+         WHERE edges.type = ? AND f.key = ? AND t.key = ?',
+    );
+    $stmt->execute([$type, $fromKey, $toKey]);
+
+    return ((int) $stmt->fetchColumn()) > 0;
 }

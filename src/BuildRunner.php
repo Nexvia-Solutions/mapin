@@ -13,6 +13,7 @@ use Mapin\Extract\Contracts\SourceFile;
 use Mapin\Extract\Contracts\UnresolvedRow;
 use Mapin\Extract\Discovery\FileDiscovery;
 use Mapin\Extract\Discovery\Hasher;
+use Mapin\Extract\Js\JsExtractor;
 use Mapin\Extract\Markdown\MarkdownExtractor;
 use Mapin\Extract\Php\PhpExtractor;
 use Mapin\Extract\Routes\RouteExtractor;
@@ -133,15 +134,29 @@ final class BuildRunner
         // a link to another markdown file in this same batch needs that file's own doc node to
         // already exist by the time links are resolved in pass 2, not just be about to.
         $markdownExtractor = new MarkdownExtractor;
+        $jsExtractor = new JsExtractor;
         /** @var array<string, array<int, array{level: int, title: string, anchor: string, line: int, text: string}>> $markdownSectionsByFile */
         $markdownSectionsByFile = [];
+        /** @var array<string, array<int, array{verb: ?string, url: string, line: int}>> $jsCallsByFile */
+        $jsCallsByFile = [];
         /** @var array<string, array<string,int>> $nodeIdsByFile */
         $nodeIdsByFile = [];
-        $store->transaction(function () use ($store, $filesToResolve, $fragments, $fileIds, $markdownExtractor, &$markdownSectionsByFile, &$nodeIdsByFile, &$totalNodes): void {
+        $store->transaction(function () use ($store, $filesToResolve, $fragments, $fileIds, $markdownExtractor, $jsExtractor, &$markdownSectionsByFile, &$jsCallsByFile, &$nodeIdsByFile, &$totalNodes): void {
             foreach ($filesToResolve as $file) {
                 if ($file->lang === 'md') {
                     $parsed = $markdownExtractor->nodes($file);
                     $markdownSectionsByFile[$file->relativePath] = $parsed['sections'];
+                    $fileId = $fileIds[$file->relativePath];
+                    $store->pruneStaleNodes($fileId, array_map(static fn ($n) => $n->key, $parsed['nodes']));
+                    $store->clearFileOutput($fileId);
+                    $nodeIdsByFile[$file->relativePath] = $store->upsertNodes($parsed['nodes'], $fileId);
+                    $totalNodes += count($parsed['nodes']);
+
+                    continue;
+                }
+                if ($file->lang === 'js') {
+                    $parsed = $jsExtractor->nodes($file);
+                    $jsCallsByFile[$file->relativePath] = $parsed['calls'];
                     $fileId = $fileIds[$file->relativePath];
                     $store->pruneStaleNodes($fileId, array_map(static fn ($n) => $n->key, $parsed['nodes']));
                     $store->clearFileOutput($fileId);
@@ -174,13 +189,15 @@ final class BuildRunner
 
         $resolver = new Resolver($index, $routeKeysByName);
 
-        $store->transaction(function () use ($store, $filesToResolve, $fragments, $fileIds, $phpExtractor, $resolver, $markdownExtractor, $markdownSectionsByFile, $nodeIdsByFile, &$totalNodes, &$totalEdges, &$totalUnresolved): void {
+        $store->transaction(function () use ($store, $filesToResolve, $fragments, $fileIds, $phpExtractor, $resolver, $markdownExtractor, $markdownSectionsByFile, $jsExtractor, $jsCallsByFile, $nodeIdsByFile, &$totalNodes, &$totalEdges, &$totalUnresolved): void {
             // Pass 2: resolve each file's calls/instantiates/etc, but still don't look up target
             // node IDs yet - an extraNode (view, table, component) created while resolving one
             // file could be the target of an edge from a file resolved earlier in this same loop.
             // Markdown files resolve their links and mentions here too, now that every other
             // file's nodes - including every other markdown file's own doc/section nodes from pass
             // 1 above, and the routes/bindings extracted between pass 1 and here - exist to search.
+            // JS files resolve their requests edges here for the identical reason: route nodes only
+            // exist from that same routes/bindings step between pass 1 and here.
             /** @var array<string, array{0: int, 1: array<string,int>, 2: Edge[], 3: UnresolvedRow[]}> $perFile */
             $perFile = [];
             foreach ($filesToResolve as $file) {
@@ -190,6 +207,13 @@ final class BuildRunner
                 if ($file->lang === 'md') {
                     $sections = $markdownSectionsByFile[$file->relativePath] ?? [];
                     $resolved = $markdownExtractor->edges($file, $sections, $store);
+                    $perFile[$file->relativePath] = [$fileId, $nodeIds, $resolved['edges'], $resolved['unresolved']];
+
+                    continue;
+                }
+                if ($file->lang === 'js') {
+                    $calls = $jsCallsByFile[$file->relativePath] ?? [];
+                    $resolved = $jsExtractor->edges($file, $calls, $store);
                     $perFile[$file->relativePath] = [$fileId, $nodeIds, $resolved['edges'], $resolved['unresolved']];
 
                     continue;
