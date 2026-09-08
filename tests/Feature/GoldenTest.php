@@ -58,19 +58,50 @@ it('matches the committed snapshot of every node and edge the fixture app produc
 });
 
 /**
+ * Laravel itself registers some of its own routes by default (a local-disk storage-serving route,
+ * for instance) - which ones exist, and under what conditions, varies by Laravel version and was
+ * never part of the invented fixture to begin with: present in the environment the committed
+ * snapshot was first generated against, absent running the identical fixture against a genuinely
+ * fresh Laravel 11 install (SPEC.md 1.14 - found running CI for real, not assumed). Keeping only
+ * routes whose own action belongs to the fixture's own namespace - the same allowlist-not-denylist
+ * lesson Phase 5's own community node filter already learned, rather than trying to enumerate every
+ * possible framework-default route one at a time - keeps this snapshot about what the fixture
+ * itself produces, independent of which Laravel version happened to run it. Everything an excluded
+ * route touches (its own `routes_to`/`uses_middleware` edges) is excluded the same way, so nothing
+ * pointing at a route this snapshot no longer lists survives into the edge list either.
+ *
  * @return array{nodes: list<string>, edges: list<array{type: string, from: string, to: string, resolution: ?string}>}
  */
 function mapinGoldenSnapshot(SqliteStore $store): array
 {
     $pdo = $store->pdo();
 
-    $nodes = $pdo->query('SELECT key FROM nodes ORDER BY key')->fetchAll(PDO::FETCH_COLUMN);
+    $excludedRouteIds = $pdo->query(
+        "SELECT id FROM nodes WHERE type = 'route' AND COALESCE(json_extract(meta, '$.action'), '') NOT LIKE 'Fixture\\%'",
+    )->fetchAll(PDO::FETCH_COLUMN);
 
-    $rows = $pdo->query(
-        'SELECT edges.type, s.key AS from_key, t.key AS to_key, edges.resolution
-         FROM edges JOIN nodes s ON s.id = edges.from_id JOIN nodes t ON t.id = edges.to_id
-         ORDER BY edges.type, s.key, t.key, edges.resolution',
-    )->fetchAll(PDO::FETCH_ASSOC);
+    $nodesSql = 'SELECT key FROM nodes';
+    $edgesSql = 'SELECT edges.type, s.key AS from_key, t.key AS to_key, edges.resolution
+                  FROM edges JOIN nodes s ON s.id = edges.from_id JOIN nodes t ON t.id = edges.to_id';
+    $nodesParams = [];
+    $edgesParams = [];
+    if ($excludedRouteIds !== []) {
+        $placeholders = implode(',', array_fill(0, count($excludedRouteIds), '?'));
+        $nodesSql .= " WHERE id NOT IN ({$placeholders})";
+        $edgesSql .= " WHERE edges.from_id NOT IN ({$placeholders}) AND edges.to_id NOT IN ({$placeholders})";
+        $nodesParams = $excludedRouteIds;
+        $edgesParams = [...$excludedRouteIds, ...$excludedRouteIds];
+    }
+    $nodesSql .= ' ORDER BY key';
+    $edgesSql .= ' ORDER BY edges.type, s.key, t.key, edges.resolution';
+
+    $nodesStmt = $pdo->prepare($nodesSql);
+    $nodesStmt->execute($nodesParams);
+    $nodes = $nodesStmt->fetchAll(PDO::FETCH_COLUMN);
+
+    $edgesStmt = $pdo->prepare($edgesSql);
+    $edgesStmt->execute($edgesParams);
+    $rows = $edgesStmt->fetchAll(PDO::FETCH_ASSOC);
 
     $edges = array_map(static fn (array $r): array => [
         'type' => $r['type'],

@@ -17,6 +17,24 @@ jobs:
           - php: '8.2'
             laravel: '13.*'
     name: PHP ${{ matrix.php }} - Laravel ${{ matrix.laravel }}
+    # Laravel 13 is allowed to fail here, not silently excluded: orchestra/testbench (this
+    # package's own dev-only test harness) has no release supporting Laravel 13 yet, at any PHP
+    # version - checked directly, not assumed, the day this was written. Mapin's own runtime
+    # dependencies (illuminate/console|container|contracts|routing|support) do not need
+    # Testbench at all in a real host application, and Laravel 13 compatibility is verified
+    # there instead (SPEC.md 1.9's gap 2, installed against a real Laravel 13 application). This
+    # leg exists so the matrix keeps trying automatically and turns green on its own the day
+    # Testbench catches up, rather than needing someone to remember to re-add it by hand.
+    continue-on-error: ${{ matrix.laravel == '13.*' }}
+    env:
+      # Laravel 11's own patch releases are, as of this writing, all flagged by at least one
+      # Packagist security advisory - not a Mapin concern (these are the host framework's own
+      # advisories, irrelevant to a dev-only Testbench install used purely to run this package's
+      # test suite against a given Laravel version, never to run any application in production).
+      # Composer's own install-time advisory block otherwise refuses to resolve any Laravel 11
+      # release at all, which would fail this leg for a reason that has nothing to do with
+      # whether Mapin itself actually works against Laravel 11.
+      COMPOSER_NO_BLOCKING: 1
     steps:
       - uses: actions/checkout@v4
 
