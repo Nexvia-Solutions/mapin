@@ -5,8 +5,10 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-08
+
 First public release. Everything below shipped in the same initial development push - phases 0
-through 7 of [SPEC.md](SPEC.md), each with its own results write-up (SPEC.md section 1) covering
+through 8 of [SPEC.md](SPEC.md), each with its own results write-up (SPEC.md section 1) covering
 what was built, what was verified against a real Laravel application, and every real bug found
 along the way. Phase numbers below match those write-ups.
 
@@ -33,6 +35,9 @@ along the way. Phase numbers below match those write-ups.
   Local by default (`NullClient`); one provider driver ships (Ollama).
 - **JavaScript extraction** (phase 7): `fetch`/`axios`/jQuery `$.ajax` calls with a literal URL,
   matched to the route they request and included in `impact`.
+- **Release polish** (phase 8): third-party extractors, registered via `config('mapin.extractors')`
+  and run alongside the built-in ones rather than replacing them; README, README.es, CONTRIBUTING,
+  and `docs/EXTENDING.md`; a working CI matrix across Laravel 11/12/13 and PHP 8.2-8.4.
 
 ### Fixed
 
@@ -47,4 +52,5 @@ explicit `axios.get`/`axios.post` verb in favor of guessing from the URL alone; 
 own CI, which had never actually been run against real GitHub infrastructure until this release
 was being prepared, and needed three separate real fixes once it was.
 
-[Unreleased]: https://github.com/Nexvia-Solutions/mapin/commits/main
+[Unreleased]: https://github.com/Nexvia-Solutions/mapin/compare/v0.1.0...main
+[0.1.0]: https://github.com/Nexvia-Solutions/mapin/releases/tag/v0.1.0
