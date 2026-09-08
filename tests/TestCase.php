@@ -23,6 +23,15 @@ abstract class TestCase extends BaseTestCase
         // covered by tests/Unit/ResolverTest.php without needing real Illuminate source at all,
         // since SymbolIndex::isModel() matches by name). Keeping this empty keeps them fast.
         $app['config']->set('mapin.vendor_paths', []);
+        // Testbench's own skeleton app ships its own default resources/views/welcome.blade.php and
+        // resources/views/errors/*.blade.php - noise from the test harness, not the invented
+        // fixture, but real enough to break GoldenTest's exact snapshot on a genuinely fresh
+        // install: a local dev container reused across a long session never showed this, a real CI
+        // run building from scratch did (SPEC.md 1.14).
+        $app['config']->set('mapin.exclude', [
+            'resources/views/welcome.blade.php',
+            'resources/views/errors/*.blade.php',
+        ]);
     }
 
     protected function tempStoragePath(): string
