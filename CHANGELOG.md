@@ -5,6 +5,8 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-08
+
 ### Added
 
 - `mapin:install-hooks`: installs `post-commit`/`post-merge` git hooks that rebuild the graph
@@ -137,7 +139,8 @@ explicit `axios.get`/`axios.post` verb in favor of guessing from the URL alone; 
 own CI, which had never actually been run against real GitHub infrastructure until this release
 was being prepared, and needed three separate real fixes once it was.
 
-[Unreleased]: https://github.com/Nexvia-Solutions/mapin/compare/v0.2.0...main
+[Unreleased]: https://github.com/Nexvia-Solutions/mapin/compare/v0.2.1...main
+[0.2.1]: https://github.com/Nexvia-Solutions/mapin/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Nexvia-Solutions/mapin/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/Nexvia-Solutions/mapin/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Nexvia-Solutions/mapin/releases/tag/v0.1.0
