@@ -98,11 +98,13 @@ and driven by the same `Mapin\Query\Query` service the CLI uses - an MCP answer 
 | `model` | An Eloquent model's table, relations, migrations, observers, call sites |
 | `unresolved` | References the resolver could not link with confidence, for improving code or the resolver itself |
 | `stats` | Graph size and the last build's report |
+| `docs` | Sections that document a node, or the nodes a section documents (needs `mapin:build` to have indexed Markdown under `docs`/your configured paths) |
+| `hubs` | Highest degree nodes in the call/injection graph, vendor code and facades excluded |
+| `communities` | Community membership summary - size, top nodes and dominant namespaces per community (needs `mapin:communities` to have run first) |
 
-`hubs`, `communities` and `docs` are not registered yet - they depend on the community-detection
-and Markdown modules (SPEC.md phases 4 and 5), which do not exist yet. See SPEC.md section 1.6 for
-the full list of what stands between this and being a complete replacement for a generic code-graph
-MCP server.
+`hubs` reports degree from the same graph `mapin:communities` builds; its `bridges` field (how many
+distinct communities a node touches) is only populated once `mapin:communities` has run at least
+once. `communities` itself answers `found: false` until then - it never computes on demand.
 
 ## 6. The "not found" contract
 

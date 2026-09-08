@@ -42,6 +42,15 @@ final class BuildCommand extends Command
             ? new ExtractionContext($root, booted: false)
             : new ExtractionContext($root, booted: true, router: $this->laravel->make('router'), container: $container);
 
+        // config('mapin.extractors'): a host app or third-party plugin's own Extractor
+        // implementations (SPEC.md section 4 - "registered through the service provider"),
+        // resolved through the container here rather than in BuildRunner itself, which stays
+        // usable with no Laravel application booted at all (bin/benchmark, tests).
+        $extraExtractors = array_map(
+            fn (string $class) => $this->laravel->make($class),
+            (array) config('mapin.extractors', []),
+        );
+
         $report = $runner->run(
             $root,
             (string) config('mapin.storage'),
@@ -50,6 +59,7 @@ final class BuildCommand extends Command
             (array) config('mapin.exclude'),
             (bool) $this->option('full'),
             $ctx,
+            $extraExtractors,
         );
 
         if ($this->option('json')) {

@@ -35,6 +35,12 @@ final class BuildRunner
      * @param  string[]  $projectPaths
      * @param  string[]  $vendorPaths
      * @param  string[]  $exclude
+     * @param  Extractor[]  $extraExtractors  host app or third-party plugin extractors (SPEC.md
+     *                                        section 4: "registered through the service provider"
+     *                                        - BuildCommand resolves config('mapin.extractors')
+     *                                        into instances and passes them here, since this class
+     *                                        itself stays container-agnostic (it also runs from
+     *                                        bin/benchmark, with no Laravel application booted)
      */
     public function run(
         string $root,
@@ -44,6 +50,7 @@ final class BuildRunner
         array $exclude,
         bool $full,
         ?ExtractionContext $ctx = null,
+        array $extraExtractors = [],
     ): BuildReport {
         $start = microtime(true);
         $ctx ??= new ExtractionContext($root, booted: false);
@@ -76,7 +83,7 @@ final class BuildRunner
 
         $phpExtractor = new PhpExtractor;
         /** @var Extractor[] */
-        $fileExtractors = [$phpExtractor, new BladeExtractor];
+        $fileExtractors = [$phpExtractor, new BladeExtractor, ...$extraExtractors];
 
         $warnings = [];
         $fragments = [];
@@ -292,16 +299,33 @@ final class BuildRunner
         return $report;
     }
 
-    /** @param Extractor[] $extractors */
+    /**
+     * Every supporting extractor gets a turn, not just the first one to claim the file - a plugin
+     * extractor (config('mapin.extractors'), docs/EXTENDING.md) that also supports `.php` files
+     * needs to run alongside PhpExtractor, contributing its own nodes and edges on top, not replace
+     * it. For the two built-in extractors this is unchanged behaviour: their own supports() checks
+     * are mutually exclusive by lang, so at most one of them ever matches a given file anyway.
+     *
+     * @param  Extractor[]  $extractors
+     */
     private function extractWith(array $extractors, SourceFile $file, ExtractionContext $ctx): ?Fragment
     {
+        $nodes = [];
+        $edges = [];
+        $warnings = [];
+        $matched = false;
         foreach ($extractors as $extractor) {
-            if ($extractor->supports($file)) {
-                return $extractor->extract($file, $ctx);
+            if (! $extractor->supports($file)) {
+                continue;
             }
+            $matched = true;
+            $fragment = $extractor->extract($file, $ctx);
+            $nodes = [...$nodes, ...$fragment->nodes];
+            $edges = [...$edges, ...$fragment->edges];
+            $warnings = [...$warnings, ...$fragment->warnings];
         }
 
-        return null;
+        return $matched ? new Fragment($nodes, $edges, $warnings) : null;
     }
 
     /** @return array{0: Fragment, 1: int} [fragment, edges persisted] */

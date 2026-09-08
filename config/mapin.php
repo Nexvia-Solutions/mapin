@@ -98,4 +98,19 @@ return [
         'hub_percentile' => 0.99,
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Extra extractors
+    |--------------------------------------------------------------------------
+    |
+    | Fully qualified class names implementing Mapin\Extract\Contracts\Extractor
+    | (see docs/EXTENDING.md), resolved through the container and run alongside
+    | PhpExtractor/BladeExtractor on every changed file. A host app or a
+    | third-party package (a Livewire or Inertia adapter, for example) adds its
+    | own here rather than Mapin needing to know about every framework on top
+    | of Laravel.
+    |
+    */
+    'extractors' => [],
+
 ];
