@@ -5,6 +5,8 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-09-09
+
 ### Fixed
 
 - The MCP `_meta` fix from 0.2.1 (`MapinServer::validateProtocolMeta()`) used `_meta`'s outright
@@ -177,7 +179,8 @@ explicit `axios.get`/`axios.post` verb in favor of guessing from the URL alone; 
 own CI, which had never actually been run against real GitHub infrastructure until this release
 was being prepared, and needed three separate real fixes once it was.
 
-[Unreleased]: https://github.com/Nexvia-Solutions/mapin/compare/v0.2.2...main
+[Unreleased]: https://github.com/Nexvia-Solutions/mapin/compare/v0.2.3...main
+[0.2.3]: https://github.com/Nexvia-Solutions/mapin/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/Nexvia-Solutions/mapin/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/Nexvia-Solutions/mapin/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Nexvia-Solutions/mapin/compare/v0.1.1...v0.2.0
