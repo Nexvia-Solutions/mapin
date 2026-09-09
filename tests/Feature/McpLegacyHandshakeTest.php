@@ -91,6 +91,31 @@ it('lets a full legacy session through - initialize, the initialized notificatio
     expect($transport->sent[1])->not->toHaveKey('error');
 });
 
+it('treats a legacy request carrying _meta for something else (e.g. a progress token) as legacy too, not as a modern one missing protocolVersion', function () {
+    // Regression for a real bug reported from an actual client session, found only after the
+    // handshake fix shipped: the first version of validateProtocolMeta() treated _meta's outright
+    // absence as the legacy signal, which broke on a real tools/call carrying a non-empty _meta
+    // (a progressToken, here) with no protocolVersion in it - _meta is a general-purpose bag other
+    // things already use, not something 2026-07-28 introduced. That request failed with the base
+    // class's own "_meta is missing the required protocolVersion member" error - the same wording
+    // the real report quoted - even though the client was never speaking the modern protocol at all.
+    $transport = new RecordingTransport;
+    $server = mapinDriveMcpSession($transport);
+
+    $server->handle(json_encode([
+        'jsonrpc' => '2.0', 'id' => 1, 'method' => 'tools/call',
+        'params' => [
+            'name' => 'stats',
+            'arguments' => [],
+            '_meta' => ['progressToken' => 'abc123'],
+        ],
+    ]));
+
+    expect($transport->sent)->toHaveCount(1);
+    expect($transport->sent[0])->not->toHaveKey('error');
+    expect($transport->sent[0]['result']['structuredContent']['found'])->toBeTrue();
+});
+
 it('still enforces _meta.protocolVersion strictly for a modern MCP 2026-07-28 request - the legacy relaxation never leaks into that path', function () {
     $transport = new RecordingTransport;
     $server = mapinDriveMcpSession($transport);

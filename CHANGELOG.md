@@ -5,6 +5,16 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- The MCP `_meta` fix from 0.2.1 (`MapinServer::validateProtocolMeta()`) used `_meta`'s outright
+  absence as the "this is a legacy client" signal - wrong, found from a real client session: a
+  classic client can carry a non-empty `_meta` for something else entirely (a progress token on a
+  `tools/call`), which the old check couldn't distinguish from a modern client actually declaring
+  `_meta.protocolVersion`. Every real tool call failed with the same "_meta is missing the required
+  protocolVersion member" error the handshake used to fail with, just moved one step later. Fixed
+  by checking that specific key's presence instead of `_meta`'s own. See SPEC.md section 1.23.
+
 ## [0.2.2] - 2026-09-08
 
 ### Added

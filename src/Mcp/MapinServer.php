@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Mapin\Mcp;
 
+use Laravel\Mcp\Enums\MetaKey;
 use Laravel\Mcp\Server;
 use Laravel\Mcp\Server\ServerContext;
 use Laravel\Mcp\Server\Tool;
@@ -64,12 +65,19 @@ final class MapinServer extends Server
      * 2026-07-28 introduced to replace per-session negotiation - a classic client (SPEC.md section
      * 1.19) never sends it, not just on `initialize` but on every request for the rest of that
      * session, since it negotiated the protocol version once, up front, and expects that to stick.
-     * `_meta`'s absence is itself the signal: a 2026-07-28-aware client always sends it, so a
-     * request with none is unambiguously a legacy client, not a session to track state for.
+     *
+     * The first version of this fix checked `_meta`'s outright absence as the legacy signal -
+     * wrong, found from a real client's real `tools/call` request: `_meta` is a general-purpose
+     * bag that classic (pre-2026-07-28) clients already use for other things (a progress token,
+     * for one), so a legacy request can carry a non-empty `_meta` that still has no
+     * `protocolVersion` key in it. The correct signal is that specific key's presence, not
+     * `_meta`'s own - `MetaKey::PROTOCOL_VERSION`, the exact one the base class's own check below
+     * requires, checked directly rather than inferred from a broader condition.
      */
     protected function validateProtocolMeta(JsonRpcRequest $request, ServerContext $context): void
     {
-        if ($request->meta() === null) {
+        $meta = $request->meta();
+        if ($meta === null || ! array_key_exists(MetaKey::PROTOCOL_VERSION->value, $meta)) {
             return;
         }
 

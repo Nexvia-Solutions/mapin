@@ -442,6 +442,22 @@ Verifying 1.21 against the real application surfaced five build warnings - three
 
 ---
 
+### 1.23 The MCP `_meta` fix from 1.19 was wrong about what "legacy" meant (found 2026-09-09, reported from a real client session)
+
+Brandon updated `vendor-brandon`'s `composer.json` to the real `^0.2.2` tag and asked another live session to try the MCP connection. The handshake itself now worked (1.19's own fix) - a real improvement, confirmed independently - but every actual tool call, `stats` and `find` both, failed with `Invalid params: The request [_meta] is missing the required [io.modelcontextprotocol/protocolVersion] member`. Progress over 1.19 (the server used to reject the connection outright; now it connects and lists tools), but the same underlying symptom had just moved from the handshake to the first real call - not a different bug, the same one, still open.
+
+**Root cause: 1.19's own fix used the wrong signal.** `MapinServer::validateProtocolMeta()` treated `_meta`'s outright absence as "this is a legacy client, skip strict validation" - reasoning that held for the fixture-driven tests that verified it (a hand-built classic `initialize` and a `tools/list` with no `_meta` at all), but not for a real client: `_meta` is a general-purpose bag that classic, pre-2026-07-28 clients already use for other things - a progress token on a `tools/call`, confirmed as the actual shape once reproduced (`_meta: {progressToken: ...}`, no `protocolVersion` key anywhere in it). A legacy request carrying *some* `_meta` for an unrelated reason is not the same as a modern request declaring a protocol version, but the old check could not tell them apart - both have non-null `_meta`, so both fell through to the base class's strict check, which then failed on the one key that was never going to be there either way.
+
+**Fix.** Check the specific key the base class's own validation actually requires (`MetaKey::PROTOCOL_VERSION`, `"io.modelcontextprotocol/protocolVersion"`) rather than `_meta`'s presence as a whole: `$meta === null || ! array_key_exists(MetaKey::PROTOCOL_VERSION->value, $meta)` now both count as "not a modern request," legacy `_meta` content included. A request that does declare that key still goes through `parent::validateProtocolMeta()` unchanged - the strict, modern path 1.19's own test already covered is untouched.
+
+**Verification.** One new test in `McpLegacyHandshakeTest.php`: a `tools/call` for `stats` carrying `_meta: {progressToken: 'abc123'}` and no `protocolVersion` now succeeds (previously the exact reported failure, reproduced first before writing the fix - reverting just this fix via a tagged git stash reproduces the identical error message the real report quoted, confirming this is the same bug, not a new one). 123 tests total, PHPStan level 6 and Pint clean.
+
+**Real-application verification.** The fixed `MapinServer.php` copied into the real application's installed package; a full three-message session over stdio replicating the exact real failure - `initialize`, `notifications/initialized`, then `tools/call` for both `stats` and `find` (`{"name": "ServiceOrder"}`, the same tool and argument the real report used), each with `_meta: {progressToken: ...}` and no `protocolVersion` - both now return real results (`stats`'s real counts, `find`'s real `class:App\Models\ServiceOrder` node) instead of the error. `vendor/nexvia-solutions/mapin` deleted and reinstalled via `composer install` afterward.
+
+**Not yet done:** this is now the second time a fix in this area was verified only against hand-built fixture requests and turned out to miss a real client's actual shape (1.19's own `_meta`-absence assumption before this). No further `_meta` usages are known to exist in current MCP clients beyond `protocolVersion`/`clientCapabilities` (the modern keys) and `progressToken` (confirmed here) - if another one surfaces from real use, the same fix shape (check the specific key that matters, not `_meta`'s presence) applies again.
+
+---
+
 ## 2. Architecture
 
 Pipeline, run by `mapin:build`:
