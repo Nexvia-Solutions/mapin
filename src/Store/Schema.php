@@ -11,7 +11,7 @@ namespace Mapin\Store;
  */
 final class Schema
 {
-    public const CURRENT_VERSION = 3;
+    public const CURRENT_VERSION = 4;
 
     public const STATEMENTS = [
         'CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)',
@@ -99,9 +99,28 @@ final class Schema
             exported_at TEXT
         )',
         'CREATE INDEX IF NOT EXISTS query_misses_exported ON query_misses(exported_at)',
+
+        // A file that fails to parse/compile during mapin:build (SPEC.md 1.17/1.21's own
+        // graceful-degradation path) already produces a warning string every time it happens, but
+        // `builds.warnings` only ever holds the one build row's own JSON blob - the exact same
+        // problem query_misses solved for found:false, adapted for how build warnings actually
+        // recur: the SAME broken file produces the SAME warning on every subsequent build until
+        // someone fixes it (and with mapin:install-hooks, that can be many times a day), so this
+        // is keyed by the warning text itself (UNIQUE) and upserted, not appended - one row per
+        // distinct problem, `last_seen_at` moving forward on every build it still occurs, not a
+        // new row each time. mapin:warnings (mirroring mapin:misses) is the one deliberate
+        // exception, same as query_misses, to "never write outside storage/".
+        'CREATE TABLE IF NOT EXISTS build_warnings (
+            id INTEGER PRIMARY KEY,
+            warning TEXT NOT NULL UNIQUE,
+            first_seen_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            exported_at TEXT
+        )',
+        'CREATE INDEX IF NOT EXISTS build_warnings_exported ON build_warnings(exported_at)',
     ];
 
-    private const TABLES = ['symbol_deps', 'unresolved', 'edges', 'nodes', 'files', 'builds', 'meta', 'query_misses'];
+    private const TABLES = ['symbol_deps', 'unresolved', 'edges', 'nodes', 'files', 'builds', 'meta', 'query_misses', 'build_warnings'];
 
     public static function install(\PDO $pdo): void
     {

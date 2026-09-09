@@ -42,6 +42,26 @@ function mapinCleanupPhase2Fixtures(Application $app): void
     @unlink(config('mapin.storage'));
 }
 
+/**
+ * Shared by BladeCompilerTest.php and BuildWarningsTest.php, for the identical reason
+ * mapinCopyPhase2Fixtures() lives here rather than in whichever test file first needed it - a
+ * second file relying on this made keeping it Blade-specific test file-local no longer safe.
+ */
+function mapinCopyBladeCompilerFixtures(Application $app): void
+{
+    $base = $app->basePath();
+    File::copyDirectory(__DIR__.'/Fixtures/blade-compiler/app', $base.'/app/BladeCompilerFixture');
+    File::copyDirectory(__DIR__.'/Fixtures/blade-compiler/resources/views', $base.'/resources/views/blade-compiler');
+}
+
+function mapinCleanupBladeCompilerFixtures(Application $app): void
+{
+    $base = $app->basePath();
+    File::deleteDirectory($base.'/app/BladeCompilerFixture');
+    File::deleteDirectory($base.'/resources/views/blade-compiler');
+    @unlink(config('mapin.storage'));
+}
+
 /** Shared by every phase's own edge-existence assertions, for the identical reason mapinCopyPhase2Fixtures() lives here rather than in whichever test file first needed it. */
 function mapinEdgeExists(SqliteStore $store, string $type, string $fromKey, string $toKey): bool
 {

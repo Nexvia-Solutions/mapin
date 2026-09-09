@@ -66,6 +66,9 @@
         "file:config/services.php",
         "file:config/session.php",
         "file:config/view.php",
+        "file:resources/views/dashboard/index.blade.php",
+        "file:resources/views/dashboard/partials/stats.blade.php",
+        "file:resources/views/layouts/app.blade.php",
         "function:shipping_calculator",
         "method:Fixture\\Contracts\\PricingEngine::quote",
         "method:Fixture\\Events\\BookPublished::__construct",
@@ -583,6 +586,24 @@
             "type": "declares",
             "from": "file:app/MapinFixture/helpers.php",
             "to": "function:shipping_calculator",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "file:resources/views/dashboard/index.blade.php",
+            "to": "view:dashboard.index",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "file:resources/views/dashboard/partials/stats.blade.php",
+            "to": "view:dashboard.partials.stats",
+            "resolution": null
+        },
+        {
+            "type": "declares",
+            "from": "file:resources/views/layouts/app.blade.php",
+            "to": "view:layouts.app",
             "resolution": null
         },
         {

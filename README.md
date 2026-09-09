@@ -125,6 +125,9 @@ uses - an MCP answer and a `mapin:query` answer to the same question never diver
 - **Query misses** (`mapin:misses`): every query that came back `found: false` gets tracked
   locally, exportable to a JSONL file inside your own project so a team can review real gaps
   together. Purely local - no network call, ever, for any installation.
+- **Build warnings** (`mapin:warnings`): every file that fails to parse or compile during a build
+  (never aborts the build itself) is tracked the same way, one row per distinct problem rather than
+  once per build it keeps recurring on - exportable to the same kind of JSONL file, purely local.
 
 Every query tool is listed in [docs/MCP.md](docs/MCP.md); the full behavioral contract, every node
 and edge type, and the reasoning behind each design decision live in [SPEC.md](SPEC.md).

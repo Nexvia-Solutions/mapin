@@ -21,6 +21,7 @@ use Mapin\Console\Commands\RouteCommand;
 use Mapin\Console\Commands\StatsCommand;
 use Mapin\Console\Commands\UnresolvedCommand;
 use Mapin\Console\Commands\ViewCommand;
+use Mapin\Console\Commands\WarningsCommand;
 use Mapin\Query\GitStatus;
 use Mapin\Query\Query;
 use Mapin\Store\SqliteStore;
@@ -65,6 +66,7 @@ final class MapinServiceProvider extends ServiceProvider
             DocsCommand::class,
             CommunitiesCommand::class,
             MissesCommand::class,
+            WarningsCommand::class,
             InstallHooksCommand::class,
         ]);
     }

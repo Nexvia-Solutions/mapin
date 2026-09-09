@@ -424,6 +424,51 @@ final class SqliteStore
     }
 
     /**
+     * Called once per build (BuildRunner::run(), after $warnings is fully accumulated) with
+     * whatever warnings that build produced - upserted by the warning text itself (the table's own
+     * UNIQUE constraint), not appended, so a file that fails to parse/compile on every build from
+     * now until someone fixes it stays one row, `last_seen_at` moving forward each time rather than
+     * flooding the table. `first_seen_at`/`exported_at` are only ever set on the initial INSERT -
+     * SQLite's own `excluded.*` only exists inside the ON CONFLICT clause, so those two columns
+     * simply never appear in the UPDATE half.
+     *
+     * @param  string[]  $warnings
+     */
+    public function recordBuildWarnings(array $warnings): void
+    {
+        if ($warnings === []) {
+            return;
+        }
+        $now = gmdate('c');
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO build_warnings (warning, first_seen_at, last_seen_at) VALUES (?, ?, ?)
+             ON CONFLICT(warning) DO UPDATE SET last_seen_at = excluded.last_seen_at',
+        );
+        foreach (array_unique($warnings) as $warning) {
+            $stmt->execute([$warning, $now, $now]);
+        }
+    }
+
+    /** @return array<int,array{id:int,warning:string,first_seen_at:string,last_seen_at:string,exported_at:?string}> */
+    public function unexportedBuildWarnings(): array
+    {
+        $stmt = $this->pdo->query('SELECT id, warning, first_seen_at, last_seen_at, exported_at FROM build_warnings WHERE exported_at IS NULL ORDER BY id');
+
+        return $stmt !== false ? $stmt->fetchAll(\PDO::FETCH_ASSOC) : [];
+    }
+
+    /** @param  int[]  $ids */
+    public function markBuildWarningsExported(array $ids, string $exportedAt): void
+    {
+        if ($ids === []) {
+            return;
+        }
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $this->pdo->prepare("UPDATE build_warnings SET exported_at = ? WHERE id IN ($placeholders)")
+            ->execute([$exportedAt, ...$ids]);
+    }
+
+    /**
      * Route and middleware nodes/edges are not owned by one file (routes come from the booted
      * router as a whole, SPEC.md 4), so incremental hash-diffing does not apply to them: every
      * booted build re-extracts the complete route table and this clears the previous one first,

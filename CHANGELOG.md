@@ -5,6 +5,32 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- `mapin:warnings`: `mapin:misses`'s sibling for the other kind of signal a build already
+  produces and used to lose - a file that fails to parse/compile (never aborts the build itself,
+  but the warning only ever lived inside that one build's own row in `builds`, easy to miss and
+  never deduplicated across however many builds a real file keeps failing on until someone fixes
+  it). Keyed by the warning text itself and upserted, not appended, so the same recurring problem
+  stays one row (`last_seen_at` moving forward) instead of flooding the table. Same host-project
+  export boundary and the same "never write outside storage/, never a network call" discipline as
+  `mapin:misses`. See SPEC.md section 1.22.
+
+- `BladeExtractor` is compiler-based now, the design section 4 always described but phase 2 never
+  built (regex was "enough to pass every case tested" at the time). The regex scanner survives as
+  `DirectiveScanner`, still the structural source (`@include`/`@extends`/component tags - Blade
+  compiles these to calls on its own `$__env` runtime variable, not `view()`, so a generic PHP
+  reference visitor has nothing to recognize there) and still the documented `--no-boot` fallback.
+  What compiling adds: `route()`, `view()`, `app()`, method calls, `new` - anything written as
+  literal PHP inside `{{ }}`, `{!! !!}`, or an `@php` block, invisible to regex by construction.
+  Closes the real gap disclosed since section 1.8. See SPEC.md section 1.21 for the full write-up,
+  including two problems found only by testing against a real application at scale: Blade's own
+  compiled runtime calls (`$__env->`, `$attributes->`, `$errors->`, others) would have flooded
+  `unresolved` with pure noise without an explicit filter, and `.blade.php` files never had a
+  generic `file:` node the way `.php` files do - a pre-existing, previously-disclosed gap that
+  silently dropped this extractor's own `Declares` edge and would have dropped every new edge the
+  same way; both fixed as part of this change.
+
 ## [0.2.1] - 2026-09-08
 
 ### Added

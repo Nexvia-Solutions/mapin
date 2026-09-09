@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Mapin;
 
 use Mapin\Extract\Blade\BladeExtractor;
+use Mapin\Extract\Blade\DirectiveScanner;
 use Mapin\Extract\Container\BindingExtractor;
 use Mapin\Extract\Contracts\ExtractionContext;
 use Mapin\Extract\Contracts\Extractor;
@@ -82,8 +83,13 @@ final class BuildRunner
         }
 
         $phpExtractor = new PhpExtractor;
+        // requiresBoot() itself is documentation only (nothing reads it - RouteExtractor and
+        // BindingExtractor are gated by ExtractionContext null-checks the same way), so $ctx->booted
+        // is the real gate here too: the compiler-based BladeExtractor needs a real BladeCompiler
+        // from the container, DirectiveScanner (its own regex fallback) needs nothing booted at all.
+        $bladeExtractor = $ctx->booted ? new BladeExtractor : new DirectiveScanner;
         /** @var Extractor[] */
-        $fileExtractors = [$phpExtractor, new BladeExtractor, ...$extraExtractors];
+        $fileExtractors = [$phpExtractor, $bladeExtractor, ...$extraExtractors];
 
         $warnings = [];
         $fragments = [];
@@ -217,7 +223,7 @@ final class BuildRunner
 
         $resolver = new Resolver($index, $routeKeysByName);
 
-        $store->transaction(function () use ($store, $filesToResolve, $fragments, $fileIds, $phpExtractor, $resolver, $markdownExtractor, $markdownSectionsByFile, $jsExtractor, $jsCallsByFile, $nodeIdsByFile, $countNewNodes, &$totalNodes, &$totalEdges, &$totalUnresolved): void {
+        $store->transaction(function () use ($store, $filesToResolve, $fragments, $fileIds, $phpExtractor, $bladeExtractor, $resolver, $markdownExtractor, $markdownSectionsByFile, $jsExtractor, $jsCallsByFile, $nodeIdsByFile, $countNewNodes, &$totalNodes, &$totalEdges, &$totalUnresolved): void {
             // Pass 2: resolve each file's calls/instantiates/etc, but still don't look up target
             // node IDs yet - an extraNode (view, table, component) created while resolving one
             // file could be the target of an edge from a file resolved earlier in this same loop.
@@ -254,11 +260,19 @@ final class BuildRunner
 
                 $edges = $fragment->edges;
                 $unresolved = [];
-                $stmts = $phpExtractor->parsedStatementsFor($file->relativePath);
+                // A .blade.php file's compiled-PHP AST lives in BladeExtractor's own cache, not
+                // PhpExtractor's - only populated at all when the build was booted (SPEC.md 1.21);
+                // DirectiveScanner (the --no-boot fallback) has no such cache, so this stays null
+                // for it, same as it always has been for every .blade.php file until now.
+                $stmts = $file->lang === 'blade' && $bladeExtractor instanceof BladeExtractor
+                    ? $bladeExtractor->parsedStatementsFor($file->relativePath)
+                    : $phpExtractor->parsedStatementsFor($file->relativePath);
                 if ($stmts !== null) {
                     $resolved = $resolver->resolveFile($file->relativePath, $stmts);
                     $edges = array_merge($edges, $resolved['edges']);
-                    $unresolved = $resolved['unresolved'];
+                    $unresolved = $bladeExtractor instanceof BladeExtractor && $file->lang === 'blade'
+                        ? $bladeExtractor->filterRuntimeNoise($resolved['unresolved'])
+                        : $resolved['unresolved'];
                     if ($resolved['extraNodes'] !== []) {
                         // extraNodes are only deduplicated within the one ReferenceVisitor instance
                         // that produced them (one per file) - two files referencing the same
@@ -323,6 +337,7 @@ final class BuildRunner
             $report->warnings,
             $this->currentCommit($root),
         );
+        $store->recordBuildWarnings($report->warnings);
 
         return $report;
     }

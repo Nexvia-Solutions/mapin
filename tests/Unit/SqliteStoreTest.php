@@ -144,3 +144,61 @@ it('unexportedQueryMisses only returns rows markQueryMissesExported has not alre
     $store->recordQueryMiss('view', ['name' => 'C'], []);
     expect($store->unexportedQueryMisses())->toHaveCount(2);
 });
+
+it('recordBuildWarnings upserts by the warning text itself, never duplicating a warning that recurs across builds', function () {
+    // The real recurrence pattern this is designed for: the SAME broken file produces the SAME
+    // warning on every subsequent build until someone fixes it - with mapin:install-hooks that can
+    // be many times a day. Unlike query_misses (a fresh row every single occurrence), one distinct
+    // warning stays one row.
+    $store = sqliteStoreTestStore();
+
+    $store->recordBuildWarnings(['app/Broken.php: Syntax error on line 3']);
+    $store->recordBuildWarnings(['app/Broken.php: Syntax error on line 3']);
+    $store->recordBuildWarnings(['app/Broken.php: Syntax error on line 3']);
+
+    $rows = $store->unexportedBuildWarnings();
+    expect($rows)->toHaveCount(1);
+    expect($rows[0]['warning'])->toBe('app/Broken.php: Syntax error on line 3');
+    expect($rows[0]['first_seen_at'])->toBe($rows[0]['last_seen_at'], 'first build and this build are the same call in this test, so both timestamps should match here');
+});
+
+it('recordBuildWarnings moves last_seen_at forward on a later build without touching first_seen_at', function () {
+    $store = sqliteStoreTestStore();
+    $store->recordBuildWarnings(['app/Broken.php: Syntax error on line 3']);
+
+    // Backdate first_seen_at directly (no need to actually wait out gmdate('c')'s 1-second
+    // resolution to prove the point) - a build that recurs a while later should confirm the
+    // problem is still there (last_seen_at moving forward) without losing when it was first found.
+    $store->pdo()->exec("UPDATE build_warnings SET first_seen_at = '2020-01-01T00:00:00+00:00', last_seen_at = '2020-01-01T00:00:00+00:00'");
+
+    $store->recordBuildWarnings(['app/Broken.php: Syntax error on line 3']);
+    $row = $store->unexportedBuildWarnings()[0];
+
+    expect($row['first_seen_at'])->toBe('2020-01-01T00:00:00+00:00');
+    expect($row['last_seen_at'])->not->toBe('2020-01-01T00:00:00+00:00');
+});
+
+it('recordBuildWarnings records two genuinely different warnings as two separate rows', function () {
+    $store = sqliteStoreTestStore();
+
+    $store->recordBuildWarnings([
+        'app/Broken.php: Syntax error on line 3',
+        'resources/views/broken.blade.php: compiled output failed to parse - Syntax error on line 7',
+    ]);
+
+    expect($store->unexportedBuildWarnings())->toHaveCount(2);
+});
+
+it('unexportedBuildWarnings only returns rows markBuildWarningsExported has not already covered', function () {
+    $store = sqliteStoreTestStore();
+    $store->recordBuildWarnings(['A: broken', 'B: broken']);
+
+    $firstBatch = $store->unexportedBuildWarnings();
+    expect($firstBatch)->toHaveCount(2);
+
+    $store->markBuildWarningsExported([$firstBatch[0]['id']], gmdate('c'));
+
+    $remaining = $store->unexportedBuildWarnings();
+    expect($remaining)->toHaveCount(1)
+        ->and($remaining[0]['id'])->toBe($firstBatch[1]['id']);
+});

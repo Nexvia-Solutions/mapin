@@ -131,6 +131,10 @@ para una aplicación en containers).
   registrada localmente, exportable a un archivo JSONL dentro de tu propio proyecto para que un
   equipo revise juntos los gaps reales. Puramente local - nunca una llamada de red, para ninguna
   instalación.
+- **Warnings de build** (`mapin:warnings`): cada archivo que falla al parsear o compilar durante un
+  build (nunca aborta el build en sí) queda registrado de la misma forma, una fila por problema
+  distinto en vez de una por cada build en que se repite - exportable al mismo tipo de archivo
+  JSONL, puramente local.
 
 Cada tool de consulta está listada en [docs/MCP.md](docs/MCP.md); el contrato de comportamiento
 completo, cada tipo de nodo y edge, y el razonamiento detrás de cada decisión de diseño viven en
