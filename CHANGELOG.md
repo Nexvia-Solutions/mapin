@@ -5,6 +5,16 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `mapin:impact` on a whole class silently returned almost nothing - `found: true` with real doc
+  mentions but `routes`/`methods`/`classes` all empty, even for a controller with dozens of real
+  routes reaching it. No edge type but `documents` ever points at a class node directly - every
+  `routes_to`/`calls`/etc. targets the class's own method nodes - so a class-key query's backward
+  walk, seeded only with the class's own id, structurally never reached them. Fixed by seeding the
+  walk with the class's id and every method it declares, at the same starting depth. See SPEC.md
+  section 1.24.
+
 ## [0.2.3] - 2026-09-09
 
 ### Fixed

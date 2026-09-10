@@ -196,8 +196,29 @@ final class Query
                 AND (edges.confidence IS NULL OR edges.confidence >= ?)",
         );
 
-        $visited = [(int) $node['id'] => true];
-        $frontier = [(int) $node['id']];
+        // A class key on its own is a near-useless seed for reverse reachability: nothing points
+        // at a class directly except `documents` (a doc mentioning it by name) - `routes_to`,
+        // `calls`, and everything else this method walks target the class's own METHOD nodes, not
+        // the class itself. Seeding the frontier with every method the class `declares` too - the
+        // same depth as the class, so a route calling one of them still reports depth 1 - is what
+        // "impact of a class" actually has to mean; without this, a class-level query silently
+        // returned found:true with routes/methods/classes all empty even for a controller with
+        // dozens of real routes reaching it, which is a misleading answer, not an honest one
+        // (found from a real session's report: mapin_impact on a whole controller class came back
+        // with real doc mentions but zero code-level impact, for a class confirmed by direct query
+        // to have 30+ real routes_to edges - just none of them pointing at the class node itself).
+        $seedIds = [(int) $node['id']];
+        if ($node['type'] === NodeType::ClassLike->value) {
+            $methodStmt = $pdo->prepare(
+                "SELECT target.id FROM edges JOIN nodes target ON target.id = edges.to_id
+                 WHERE edges.from_id = ? AND edges.type = 'declares' AND target.type = 'method'",
+            );
+            $methodStmt->execute([(int) $node['id']]);
+            $seedIds = [...$seedIds, ...array_map('intval', $methodStmt->fetchAll(\PDO::FETCH_COLUMN))];
+        }
+
+        $visited = array_fill_keys($seedIds, true);
+        $frontier = $seedIds;
         $found = [];
 
         for ($level = 1; $level <= $depth && $frontier !== []; $level++) {

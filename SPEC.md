@@ -458,6 +458,22 @@ Brandon updated `vendor-brandon`'s `composer.json` to the real `^0.2.2` tag and 
 
 ---
 
+### 1.24 `impact()` on a whole class silently returned almost nothing (found 2026-09-10, reported from real use)
+
+A session reviewing documentation accuracy ran `mapin_impact` on a real controller class (`CartController`) to check what still depends on it, got `found: true` with `routes`/`methods`/`classes` all empty (only `docs` had real content), and guessed the cause was a Mapin limitation with array-callable route bindings - reasonable, but wrong, and disclosed as a guess rather than asserted as fact, which is exactly what led to it being checked here instead of quietly believed. Brandon asked directly: why, and can it be improved.
+
+**Root cause, confirmed by querying the real database directly before touching any code.** The class in question has real data: 205 edges reference it, including 40+ real `routes_to` edges. But every one of them targets the class's own **method** nodes (`method:App\...\CartController::index`, etc.), never the class node itself - the only edge type that ever points at a class node directly is `documents` (a Markdown section mentioning the class by name). `Query::impact()`'s backward BFS seeds its frontier with exactly one id - the node passed in - so a class-key query only ever asks "what points at this exact class id," which for `routes_to`/`calls`/every edge type except `documents` is structurally always empty, for *any* class, not something specific to `CartController` or route-binding style. `found: true` with real doc mentions but a silently empty `routes`/`methods`/`classes` is a misleading answer, not an honest one - it reads as "nothing depends on this," not "this query shape doesn't reach what you're asking about," for a class real routes clearly do depend on.
+
+**Fix.** When the resolved node is a `class` (`NodeType::ClassLike`), seed the BFS frontier with the class's own id *and* every method id it `declares` (one extra query, `edges.type = 'declares' AND target.type = 'method'` from the class), all at the same starting depth - a route or call reaching one of those methods now reports `depth: 1`, matching how a direct hit on the original seed already worked. Nothing else about the walk changed; `documents` edges targeting the class directly still contribute exactly as before, just no longer the only thing that does. SPEC.md's own requirements language (line 32) only ever promised `impact` for a *method* key - this was never a broken contract so much as a gap in what the contract covered, one intuitive enough that a real user hit it immediately.
+
+**Verification.** One new test (`Phase2Test.php`): `mapin:impact` on a fixture controller's class key now reaches the real route registered against one of its methods, which it did not before. Reverted the fix via a tagged git stash and confirmed the test fails with the exact real symptom (`routes` empty), then restored it. 124 tests total, PHPStan level 6 and Pint clean.
+
+**Real-application verification.** The fixed `Query.php` copied into the real application's installed package; `mapin:impact` on `class:App\Http\Controllers\Backend\Pos\CartController` (the exact class the real report used) now returns 60 routes and 18 methods, up from zero of either - `docs` (37) and the empty `views`/`jobs`/`commands`/`classes` buckets were unaffected, confirming the fix only ever adds what a class's own methods reach, nothing else. `vendor/nexvia-solutions/mapin` deleted and reinstalled via `composer install` afterward.
+
+**A separately-flagged item turned out to already be resolved, not a second bug.** The same request asked to check `docs/mapin-misses.jsonl` (SPEC.md 1.15) for anything unresolved. One real entry existed: a `find` for `"App\Models\ServiceOrder"` (the full FQCN, not the short name) recorded `found: false` at `2026-09-08T21:59:34Z`. Reproduced against the current graph before assuming anything - it now resolves correctly (`found: true`), because that timestamp predates 1.18's own `findNodes()` ranking fix reaching this application's installed package; 1.18's fix covers full-FQCN searches equally well as short-name ones (same `ORDER BY`, `nodes.name = :name2` matches a full FQCN exactly), confirmed rather than assumed. No action needed - kept as a real, if now-historical, data point that 1.18's bug was slightly broader than its own write-up measured.
+
+---
+
 ## 2. Architecture
 
 Pipeline, run by `mapin:build`:

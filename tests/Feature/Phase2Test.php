@@ -108,3 +108,24 @@ it('impact lists the route reaching a deeply-called service method', function ()
     $routeKeys = array_column($result['result']['routes'], 'key');
     expect($routeKeys)->not->toBeEmpty();
 });
+
+it('impact on a whole class reaches the routes/calls that target its own methods, not just doc mentions', function () {
+    // Regression for a real bug reported from live use: nothing points at a class node directly
+    // except `documents` (a doc mentioning it by name) - routes_to/calls/etc. all target the
+    // class's own method nodes, never the class itself. Before this fix, mapin:impact on a whole
+    // controller class came back found:true with real doc mentions but routes/methods/classes all
+    // silently empty - a misleading "nothing depends on this" answer for a class dozens of real
+    // routes actually reach, not an honest one.
+    Artisan::call('mapin:build', ['--full' => true]);
+
+    Artisan::call('mapin:impact', [
+        'key' => 'class:Fixture\\Http\\Controllers\\DashboardController',
+        '--depth' => 3,
+        '--json' => true,
+    ]);
+    $result = json_decode(Artisan::output(), true);
+
+    expect($result['found'])->toBeTrue();
+    $routeKeys = array_column($result['result']['routes'], 'key');
+    expect($routeKeys)->toContain('route:GET /dashboard');
+});
