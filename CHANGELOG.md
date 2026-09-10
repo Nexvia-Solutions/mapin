@@ -5,6 +5,8 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-09-10
+
 ### Fixed
 
 - `mapin:impact` on a whole class silently returned almost nothing - `found: true` with real doc
@@ -189,7 +191,8 @@ explicit `axios.get`/`axios.post` verb in favor of guessing from the URL alone; 
 own CI, which had never actually been run against real GitHub infrastructure until this release
 was being prepared, and needed three separate real fixes once it was.
 
-[Unreleased]: https://github.com/Nexvia-Solutions/mapin/compare/v0.2.3...main
+[Unreleased]: https://github.com/Nexvia-Solutions/mapin/compare/v0.2.4...main
+[0.2.4]: https://github.com/Nexvia-Solutions/mapin/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/Nexvia-Solutions/mapin/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/Nexvia-Solutions/mapin/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/Nexvia-Solutions/mapin/compare/v0.2.0...v0.2.1
